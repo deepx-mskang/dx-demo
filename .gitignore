@@ -1,0 +1,103 @@
+############################
+# Python
+############################
+
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv*/
+venv/
+env/
+ENV/
+
+# Python packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# pip
+pip-wheel-metadata/
+
+# pytest
+.pytest_cache/
+
+# mypy
+.mypy_cache/
+
+# coverage
+.coverage
+htmlcov/
+
+# Jupyter
+.ipynb_checkpoints/
+
+############################
+# C / C++ build artifacts
+############################
+
+# object files
+*.o
+*.obj
+*.so
+*.a
+*.dll
+*.dylib
+
+# executables
+*.exe
+*.out
+*.app
+
+# CMake
+build/
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+compile_commands.json
+Makefile
+
+############################
+# IDE
+############################
+
+# VSCode
+.vscode/
+
+# CLion / JetBrains
+.idea/
+
+# Visual Studio
+*.vcxproj*
+*.sln
+*.user
+
+############################
+# OS
+############################
+
+# Linux
+*~
+
+# Mac
+.DS_Store
+
+# Windows
+Thumbs.db
+
+############################
+# Logs
+############################
+
+*.log
+
+############################
+# Temporary
+############################
+
+tmp/
+temp/
+
+
