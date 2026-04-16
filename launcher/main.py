@@ -37,22 +37,22 @@ NUM_ITEMS = 9
 # Grid columns; rows are computed as ceil(NUM_ITEMS / GRID_COLUMNS).
 GRID_COLUMNS = 3
 
-# Project root (directory containing this file); images are resolved relative to it.
+# Launcher root (directory containing this file); assets and ready state live here.
 _ROOT = Path(__file__).resolve().parent
 
 # Wait ends early when the launched app updates this file (path passed in $DX_LAUNCHER_READY_FILE).
-READY_STATUS_DIR = Path(os.path.expanduser("~/demos/dx-demo-launcher/ready")).resolve()
+READY_STATUS_DIR = (_ROOT / "ready").resolve()
 READY_FILE_ENV = "DX_LAUNCHER_READY_FILE"
 
 _ready_watcher: QFileSystemWatcher | None = None
 _ready_finishers: dict[str, Callable[[], None]] = {}
 
 # Per-item configuration. Paths in "image" are relative to _ROOT unless absolute.
-# video_script / camera_script: passed to bash (expanduser applied).
+# video_script / camera_script: resolved relative to _ROOT unless absolute.
 # video_label / camera_label (optional): override button text (default "Video" / "Camera"),
 #   e.g. Performance Monitoring uses "Start" / "Stop" with the same script keys.
 # extra_buttons (optional): extra actions for some demos only, e.g.
-#   "extra_buttons": [{"label": "3D View", "script": "~/scripts/demo_3d.sh", "loading_sec": 15}, ...]
+#   "extra_buttons": [{"label": "3D View", "script": "../scripts/demo_3d.sh", "loading_sec": 15}, ...]
 # loading_sec (optional, seconds): card-wide default for all buttons on this item.
 # video_loading_sec / camera_loading_sec (optional): override per primary/secondary button.
 # Early end of Wait: touch or write $DX_LAUNCHER_READY_FILE (under READY_STATUS_DIR per click).
@@ -61,45 +61,45 @@ LAUNCHER_ITEMS = [
     {
         "title": "Hyundai Robotics - Delivery Robot (MobED)",
         "image": "assets/demo-robotics.png",
-        "video_script": "~/scripts/run_robotics_video.sh",
-        "camera_script": "~/scripts/run_robotics.sh",
+        "video_script": "../scripts/run_robotics_video.sh",
+        "camera_script": "../scripts/run_robotics.sh",
         "loading_sec": 5,
     },
     {
         "title": "YOLO26-S (OD / POSE / SEG / CLS)",
         "image": "assets/demo-yolo26.png",
-        "video_script": "~/scripts/run_yolo26_4_video.sh",
-        "camera_script": "~/scripts/run_yolo26_4.sh",
+        "video_script": "../scripts/run_yolo26_4_video.sh",
+        "camera_script": "../scripts/run_yolo26_4.sh",
         "loading_sec": 5,
     },
     {
         "title": "Mono Depth Estimation (Depth Anything v2)",
         "image": "assets/demo-depth.png",
-        "video_script": "~/scripts/run_depth_video.sh",
-        "camera_script": "~/scripts/run_depth.sh",
+        "video_script": "../scripts/run_depth_video.sh",
+        "camera_script": "../scripts/run_depth.sh",
         "loading_sec": 5,
     },
     {
         "title": "PaddleOCR v5",
         "image": "assets/demo-ocr.gif",
-        "video_script": "~/scripts/run_ocr.sh",
-        "camera_script": "~/scripts/run_ocr_autofocus_dis.sh",
+        "video_script": "../scripts/run_ocr.sh",
+        "camera_script": "../scripts/run_ocr_autofocus_dis.sh",
         "loading_sec": 20,
-        "video_label": "Run /AF-En",
-        "camera_label": "Run /AF-Dis",
+        "video_label": "Run AF-En",
+        "camera_label": "Run AF-Dis",
     },
     {
         "title": "CLIP Single-channel",
         "image": "assets/demo-clip-single.png",
-        "video_script": "~/scripts/run_clip_single_video.sh",
-        "camera_script": "~/scripts/run_clip_single.sh",
+        "video_script": "../scripts/run_clip_single_video.sh",
+        "camera_script": "../scripts/run_clip_single.sh",
         "loading_sec": 15,
     },
     {
         "title": "YOLOv5S Multi-channel (36)",
         "image": "assets/demo-yolo-multi.png",
-        "video_script": "~/scripts/run_yolo_multi_video.sh",
-        "camera_script": "~/scripts/run_yolo_multi.sh",
+        "video_script": "../scripts/run_yolo_multi_video.sh",
+        "camera_script": "../scripts/run_yolo_multi.sh",
         "loading_sec": 30,
     },
     {
@@ -107,16 +107,16 @@ LAUNCHER_ITEMS = [
         "image": "assets/demo-modelzoo.png",
         "video_label": "Open",
         "camera_label": "Close",
-        "video_script": "~/scripts/run_modelzoo.sh",
-        "camera_script": "~/scripts/kill_modelzoo.sh",
+        "video_script": "../scripts/run_modelzoo.sh",
+        "camera_script": "../scripts/kill_modelzoo.sh",
     },
     {
         "title": "CLIP Multi-channel",
         "image": "assets/demo-clip.png",
-        "video_script": "~/scripts/run_clip_video.sh",
-        "camera_script": "~/scripts/run_clip.sh",
+        "video_script": "../scripts/run_clip_video.sh",
+        "camera_script": "../scripts/run_clip.sh",
         "loading_sec": 30,
-        # "extra_buttons": [{"label": "Export", "script": "~/scripts/export.sh"}],
+        # "extra_buttons": [{"label": "Export", "script": "../scripts/export.sh"}],
         # "loading_sec": 12,           # 이 카드는 기본 12초
         # "video_loading_sec": 20,     # Video만 20초
     },
@@ -125,8 +125,8 @@ LAUNCHER_ITEMS = [
         "image": "assets/demo-perf.png",
         "video_label": "Start",
         "camera_label": "Stop",
-        "video_script": "~/scripts/run_dxtop.sh",
-        "camera_script": "~/scripts/kill_perf.sh",
+        "video_script": "../scripts/run_dxtop.sh",
+        "camera_script": "../scripts/kill_perf.sh",
         "camera_loading_sec": 0,
     },
 ]
@@ -189,12 +189,12 @@ def _ensure_ready_status_dir() -> Path:
 
 
 def _resolve_shell_script(script_path: str) -> Path | None:
-    expanded = os.path.expanduser(script_path)
-    if not expanded:
+    expanded = Path(os.path.expanduser(script_path))
+    if not str(expanded):
         return None
-    p = Path(expanded)
+    p = expanded if expanded.is_absolute() else (_ROOT / expanded).resolve()
     if not p.is_file():
-        print(f"[launcher] script not found: {expanded}", file=sys.stderr)
+        print(f"[launcher] script not found: {p}", file=sys.stderr)
         return None
     return p
 
