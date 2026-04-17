@@ -1,9 +1,9 @@
 #!/bin/bash
 
-./kill_depth.sh
+cd ~/dx-demos/depth
 
-source ~/demos/venv_gst_en/bin/activate
+../scripts/kill_depth.sh
 
-cd ~/demos/depth-anythingv2
+source .venv-depth/bin/activate
 
-python3 demo_depth_video.py -m depth_anything_v2_vits_294x518_sim_aggsv.dxnn -s --video /home/deepx/dx-all-suite/workspace/res/videos/sample_videos/dogs.mp4
+python3 demo_depth_video.py -m models/depth_anything_v2_vits_294x518.dxnn -s --video ~/Videos/dogs.mp4

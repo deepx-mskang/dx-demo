@@ -2,6 +2,6 @@
 
 ./kill_clip.sh
 
-cd ~/demos/dx_demo/dx_clip_demo
+cd ~/dx-demos/clip-multi
 
 ./run_demo_video.sh

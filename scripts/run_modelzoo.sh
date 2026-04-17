@@ -1,6 +1,6 @@
 #!/bin/bash
 
-cd ~/demos/dx-model-zoo
+cd ~/dx-demos/model-zoo
 
-chromium-browser --start-fullscreen DX_ModelZoo_v2.2.1.html
+google-chrome --password-store=basic --start-fullscreen DX_ModelZoo_v2.2.1_0318.html
 #chromium-browser DX_ModelZoo_v2.2.1.html

@@ -8,8 +8,8 @@ set -euo pipefail
 # Note: Matching the Ubuntu package binary path closes every Chromium window using that install.
 # If you run other sites in the same browser, they will close too.
 
-pkill -TERM -f '/usr/lib/chromium-browser/chromium-browser' 2>/dev/null || true
 pkill -TERM -f 'run_modelzoo\.sh' 2>/dev/null || true
+pkill -TERM -f 'chrome' 2>/dev/null || true
 
 # sleep 1
 

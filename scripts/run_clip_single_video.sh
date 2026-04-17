@@ -2,9 +2,9 @@
 
 ./kill_clip.sh
 
-cd /home/deepx/demos/dx-clip-starter
+cd ~/dx-demos/clip-single
 
-source .venv-clip/bin/activate
+source ../.venv-pyqt5/bin/activate
 
 python3 camera-text-matcher-async-gui.py \
   --texts "A car on fire with bright flames and black smoke" \

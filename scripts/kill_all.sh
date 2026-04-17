@@ -8,4 +8,4 @@ set -euo pipefail
 ./kill_yolo_multi.sh
 ./kill_robotics.sh
 
-sleep 1
+sleep 0.2

@@ -2,37 +2,21 @@
 
 ./kill_robotics.sh
 
-cd ~/demos/dx-demo-robotics
+cd ~/dx-demos/robotics
 
-./run_demo.sh
+MODELS="assets/models"
 
-
-# Run Face ID
-# =================================================
-#cd ~/demos/dx_demo_internal/face_recognition_demo
-
-#./bin/face_recognition_demo \
-#	-m0 assets/models/PytorchHalfpixel.dxnn \
-#	-m1 assets/models/FaceAlignment.dxnn \
-#	-m2 assets/models/FaceID.dxnn \
-#	-c 0\
-#	-re 0 \
-#	-t &
+BIN="./bin/robotics_demo"
 
 
-# Run Pose + Segmentation
-# =================================================
-#cd ~/demos/dx_demo_internal/pose_seg_demo
+"$BIN" \
+    -m0 "${MODELS}/PytorchHalfpixel_1.dxnn" \
+    -m1 "${MODELS}/FaceAlignment.dxnn" \
+    -m2 "${MODELS}/FaceID_1.dxnn" \
+    -mps0 "${MODELS}/YOLOV5Pose_PPU.dxnn" \
+    -mps1 "${MODELS}/DDRNet_1.dxnn" \
+    -md "${MODELS}/MobED_detector_80_fixed.dxnn" \
+    -c
 
-#./bin/pose_seg_demo \
-#	-m0 assets/models/YOLOV5Pose_PPU.dxnn \
-#	-m1 assets/models/DDRNet_1.dxnn \
-#	-p0 1 \
-#	-re 0 \
-#	-c 2 &
+popd > /dev/null
 
-# Run Object Detection (YOLOv26-S)
-# =================================================
-#cd ~/dx-all-suite/dx-runtime/dx_app
-
-#./bin/yolov26_async -m assets/models/yolo26s-1.dxnn -c 4
