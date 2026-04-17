@@ -695,15 +695,15 @@ def parse_args() -> argparse.Namespace:
             "Default input: GStreamer V4L2 camera; use --video for a file."
         )
     )
-    p.add_argument("--model", type=str, default="yolo26s-1.dxnn", help="YOLOv26 detection .dxnn")
+    p.add_argument("--model", type=str, default="models/yolo26s-1.dxnn", help="YOLOv26 detection .dxnn")
     p.add_argument(
-        "--model-pose", type=str, default="yolo26s-pose.dxnn", help="YOLOv26Pose .dxnn"
+        "--model-pose", type=str, default="models/yolo26s-pose.dxnn", help="YOLOv26Pose .dxnn"
     )
-    p.add_argument("--model-seg", type=str, default="yolo26s-seg.dxnn", help="YOLOv26Seg .dxnn")
+    p.add_argument("--model-seg", type=str, default="models/yolo26s-seg.dxnn", help="YOLOv26Seg .dxnn")
     p.add_argument(
         "--model-cls",
         type=str,
-        default="yolo26s-cls.dxnn",
+        default="models/yolo26s-cls.dxnn",
         help="YOLOv26Cls .dxnn (default: yolo26s-cls.dxnn)",
     )
     p.add_argument(
