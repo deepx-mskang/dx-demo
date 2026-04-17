@@ -1,0 +1,12 @@
+numpy
+torch
+torchvision
+open_clip_torch
+onnx
+onnxsim
+onnxruntime
+onnxscript
+opencv-python-headless
+tqdm
+scipy
+PyQt5

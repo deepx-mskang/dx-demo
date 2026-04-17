@@ -4,3 +4,9 @@
 [submodule "dx-ocr/PaddleOCR-deepx"]
 	path = dx-ocr/PaddleOCR-deepx
 	url = https://github.com/DEEPX-AI/PaddleOCR-deepx.git
+[submodule "paddle-ocr/PP-OCRv5_Online_demo-deepx"]
+	path = paddle-ocr/PP-OCRv5_Online_demo-deepx
+	url = https://github.com/DEEPX-AI/PP-OCRv5_Online_demo-deepx.git
+[submodule "paddle-ocr/PaddleOCR-deepx"]
+	path = paddle-ocr/PaddleOCR-deepx
+	url = https://github.com/DEEPX-AI/PaddleOCR-deepx.git
