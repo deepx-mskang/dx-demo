@@ -1,0 +1,52 @@
+{
+    "usage": "multi",
+    "model_path": "./assets/models/YOLOV5S_PPU.dxnn",
+    "model_name": "YOLOv5S_512_PPU",
+
+    "video_sources": [
+        [ "./assets/videos/blackbox-city-road2.mov", "offline", 20 ],
+        [ "./assets/videos/blackbox-city-road.mp4", "offline", 20 ],
+        [ "./assets/videos/boat.mp4", "offline", 20 ],
+        [ "./assets/videos/carrierbag.mp4", "offline", 20 ],
+        [ "./assets/videos/cctv-city-road2.mov", "offline", 20 ],
+        [ "./assets/videos/cctv-city-road.mov", "offline", 20 ],
+        [ "./assets/videos/codec_test_clip_h264_16Mbps.mp4", "offline", 20 ],
+        [ "./assets/videos/codec_test_clip_h265_8Mbps.mp4", "offline", 20 ],
+        [ "./assets/videos/dance-group2.mov", "offline", 20 ],
+        [ "./assets/videos/dance-group.mov", "offline", 20 ],
+        [ "./assets/videos/dance-solo.mov", "offline", 20 ],
+        [ "./assets/videos/dogs.mp4", "offline", 20 ],
+        [ "./assets/videos/doughnut.mp4", "offline", 20 ],
+        [ "./assets/videos/dron-citry-road2.mov", "offline", 20 ],
+        [ "./assets/videos/dron-citry-road.mov", "offline", 20 ],
+        [ "/dev/video0", "camera" ],
+        [ "./assets/videos/snowboard.mp4", "offline", 20 ],
+	[ "./assets/videos/adult-fight.mp4", "offline", 20 ],
+        [ "./assets/videos/children-fight.mp4", "offline", 20 ],
+        [ "./assets/videos/oldwoman-fall.mp4", "offline", 20 ],
+        [ "./assets/videos/theft-supermarket.mp4", "offline", 20 ],
+        [ "./assets/videos/fall-hiking.mp4", "offline", 20 ],
+        [ "./assets/videos/fire2.mp4", "offline", 20 ],
+        [ "./assets/videos/taekwondo-competition.mp4", "offline", 20 ],
+        [ "./assets/videos/workplace-fall.mp4", "offline", 20 ],
+        [ "./assets/videos/chick-hatching.mp4", "offline", 60 ],
+        [ "./assets/videos/oldman-fall.mp4", "offline", 20 ],
+        [ "./assets/videos/theft-home.mp4", "offline", 20 ],
+        [ "./assets/videos/blackbox-city-road2.mov", "offline", 20 ],
+        [ "./assets/videos/blackbox-city-road.mp4", "offline", 20 ],
+        [ "./assets/videos/boat.mp4", "offline", 20 ],
+        [ "./assets/videos/carrierbag.mp4", "offline", 20 ],
+        [ "./assets/videos/cctv-city-road2.mov", "offline", 20 ],
+        [ "./assets/videos/codec_test_clip_h264_16Mbps.mp4", "offline", 20 ],
+        [ "./assets/videos/dance-group2.mov", "offline", 20 ],
+        [ "./assets/videos/cctv-city-road.mov", "offline", 20 ]
+    ],
+
+    "display_config": {
+        "display_label": "output",
+        "capture_period": 24,
+        "output_width": 1920,
+        "output_height": 1080,
+        "show_fps": true
+    }
+}
