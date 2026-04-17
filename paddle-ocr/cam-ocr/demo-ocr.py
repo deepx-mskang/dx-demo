@@ -9,7 +9,8 @@ from dx_engine import InferenceOption as IO
 
 from PySide6.QtWidgets import (
     QApplication, QWidget, QHBoxLayout, QVBoxLayout,
-    QLabel, QPushButton, QListWidget, QFileDialog, QSizePolicy, QGridLayout, QScrollArea, QTextEdit, QTableWidget, QTableWidgetItem, QComboBox, QStyledItemDelegate
+    QLabel, QPushButton, QListWidget, QFileDialog, QSizePolicy, QGridLayout, QScrollArea, QTextEdit, QTableWidget, QTableWidgetItem, QComboBox, QStyledItemDelegate,
+    QSlider,
 )
 from PySide6.QtGui import QPixmap, QImage, QBrush, QColor, QPainter, QFont, QFontDatabase
 from PySide6.QtCore import Qt, QSize, Signal, QTimer, QThread
@@ -63,7 +64,7 @@ def _font_for_inference_text(language: str):
         if fid != -1:
             families = QFontDatabase.applicationFontFamilies(fid)
             if families:
-                return QFont(families[0], 11)
+                return QFont(families[0], 10)
     # Fallback system fonts by language
     fallbacks = {
         "japan": ["Noto Sans JP", "Nanum Gothic", "Malgun Gothic", "UnDotum"],
@@ -73,9 +74,9 @@ def _font_for_inference_text(language: str):
     }
     for name in fallbacks.get(language, fallbacks["japan"]):
         f = QFont(name)
-        f.setPointSize(11)
+        f.setPointSize(10)
         return f
-    return QFont("Sans Serif", 11)
+    return QFont("Sans Serif", 10)
 
 
 # Dark theme palettes (BG, PANEL, CARD, ACCENT, ACCENT_DARK, TEXT, TEXT_DIM, BORDER, HEADER_BG)
@@ -200,7 +201,9 @@ class CameraThread(QThread):
     """Thread for V4L2 camera or video file capture."""
     frame_ready = Signal(np.ndarray)
     ocr_frame_ready = Signal(np.ndarray)  # Signal for OCR processing (every 30 frames)
-    
+    # Webcam focus_absolute: UI 0–100 (CAP_PROP_FOCUS / V4L2)
+    camera_focus_state = Signal(int, bool)  # focus_ui, focus_ok
+
     def __init__(self, camera_id=0, ocr_worker=None, video_path=None):
         super().__init__()
         self.camera_id = camera_id
@@ -208,10 +211,50 @@ class CameraThread(QThread):
         self.running = False
         self.cap = None
         self.ocr_worker = ocr_worker
+        self.focus_cmd_queue: queue.Queue = queue.Queue()
+        self._focus_scale_0_100 = True  # True: CAP_PROP_FOCUS uses 0–100; False: 0–255
     
     def get_preprocessed_image(self, input:np.ndarray):
         return self.ocr_worker.get_preprocessed_image(input)
-        
+
+    def _cap_focus_to_ui(self, raw: float) -> int:
+        if raw < 0:
+            return 0
+        if raw <= 100.0:
+            return int(max(0, min(100, round(raw))))
+        return int(max(0, min(100, round(raw * 100.0 / 255.0))))
+
+    def _ui_to_cap_focus(self, ui: int) -> float:
+        ui = max(0, min(100, int(ui)))
+        if self._focus_scale_0_100:
+            return float(ui)
+        return float(ui) * 255.0 / 100.0
+
+    def _read_focus_state(self):
+        """Read CAP_PROP_FOCUS (V4L2 focus_absolute)."""
+        if not self.cap or self.video_path:
+            return None, False
+        raw = self.cap.get(cv2.CAP_PROP_FOCUS)
+        raw = int(raw / 10)
+        if raw < 0:
+            return None, False
+        self._focus_scale_0_100 = raw <= 100.0
+        ui = self._cap_focus_to_ui(raw)
+        return ui, True
+
+    def _drain_focus_commands(self):
+        while True:
+            try:
+                cmd = self.focus_cmd_queue.get_nowait()
+            except queue.Empty:
+                break
+            if cmd[0] == "focus":
+                self.cap.set(cv2.CAP_PROP_FOCUS, self._ui_to_cap_focus(cmd[1]) * 10)
+                print(f"set focus to {cmd[1]}")
+
+    def enqueue_focus_ui(self, ui: int):
+        self.focus_cmd_queue.put(("focus", ui))
+
     def run(self):
         if self.video_path:
             path = os.path.expanduser(os.path.expandvars(str(self.video_path)))
@@ -236,8 +279,17 @@ class CameraThread(QThread):
         crop_width = 512
         print(f"w: {self.cap.get(cv2.CAP_PROP_FRAME_WIDTH)}, h:{self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT)}, FPS: {self.cap.get(cv2.CAP_PROP_FPS)}, CC: {self.cap.get(cv2.CAP_PROP_FOURCC)}")
 
+        if not self.video_path:
+            ui, focus_ok = self._read_focus_state()
+            if focus_ok and ui is not None:
+                self.camera_focus_state.emit(ui, True)
+            else:
+                self.camera_focus_state.emit(0, False)
+
         self.running = True
         while self.running:
+            if not self.video_path and self.cap:
+                self._drain_focus_commands()
             ret, frame = self.cap.read()
             if not ret:
                 if self.video_path:
@@ -548,13 +600,13 @@ class PerformanceInfoWidget(QWidget):
         self.performance_table.verticalHeader().setVisible(False)
         
         # Set row heights (1.5x default: 20 -> 30)
-        self.performance_table.verticalHeader().setDefaultSectionSize(36)
+        self.performance_table.verticalHeader().setDefaultSectionSize(30)
         
         # Set table style
         self.performance_table.setStyleSheet(f"""
             QTableWidget {{
                 font-family: 'Consolas', 'Courier New', monospace;
-                font-size: 17px;
+                font-size: 15px;
                 background-color: {DEEPX_CARD};
                 color: {DEEPX_TEXT};
                 border: 1px solid {DEEPX_BORDER};
@@ -574,7 +626,7 @@ class PerformanceInfoWidget(QWidget):
         """)
         
         # Set column widths
-        self.performance_table.setColumnWidth(0, 95)   # Labels
+        self.performance_table.setColumnWidth(0, 50)   # Labels
         self.performance_table.setColumnWidth(1, 360)  # NPU column
         
         # Set initial performance data
@@ -921,7 +973,7 @@ class ImageViewerApp(QWidget):
                 line-height: 1.2;
                 padding: 8px;
                 font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
-                font-size: 17px;
+                font-size: 14px;
                 background-color: {DEEPX_CARD};
                 color: {DEEPX_TEXT};
                 border: 1px solid {DEEPX_BORDER};
@@ -1005,6 +1057,41 @@ class ImageViewerApp(QWidget):
         # 그 아래 Inference Result Text (높이 비율 3:1 로 텍스트 영역이 더 크게)
         right_layout.addWidget(info_title)
         right_layout.addWidget(text_scroll_area, stretch=3)
+
+        # Bottom-right: focus_absolute (0–100) via V4L2 / CAP_PROP_FOCUS
+        self.focus_row_widget = QWidget()
+        focus_row = QHBoxLayout(self.focus_row_widget)
+        focus_row.setContentsMargins(0, 4, 0, 0)
+        focus_row.addStretch(1)
+        focus_lbl = QLabel("Focus Tuning")
+        focus_lbl.setStyleSheet(f"color: {DEEPX_TEXT_DIM}; font-size: 12px;")
+        self.focus_slider = QSlider(Qt.Orientation.Horizontal)
+        self.focus_slider.setRange(0, 100)
+        self.focus_slider.setFixedWidth(260)
+        self.focus_slider.setEnabled(False)
+        self.focus_slider.setStyleSheet(f"""
+            QSlider::groove:horizontal {{
+                height: 6px;
+                background: {DEEPX_BORDER};
+                border-radius: 3px;
+            }}
+            QSlider::handle:horizontal {{
+                background: {DEEPX_ACCENT};
+                width: 14px;
+                margin: -5px 0;
+                border-radius: 7px;
+            }}
+            QSlider::sub-page:horizontal {{
+                background: {DEEPX_ACCENT_DARK};
+                border-radius: 3px;
+            }}
+        """)
+        focus_row.addWidget(focus_lbl)
+        focus_row.addWidget(self.focus_slider)
+        right_layout.addWidget(self.focus_row_widget)
+        self.focus_slider.valueChanged.connect(self._on_focus_slider_changed)
+        if self.video_path:
+            self.focus_row_widget.hide()
 
         self.file_list = None
         self.camera_selector = None
@@ -1181,7 +1268,18 @@ class ImageViewerApp(QWidget):
             self.start_camera()
         else:
             self.stop_camera()
-            
+
+    def _on_camera_focus_state(self, ui: int, focus_ok: bool):
+        """Apply initial focus_absolute read from the camera thread."""
+        self.focus_slider.blockSignals(True)
+        self.focus_slider.setValue(ui)
+        self.focus_slider.blockSignals(False)
+        self.focus_slider.setEnabled(focus_ok)
+
+    def _on_focus_slider_changed(self, value: int):
+        if self.camera_thread and self.camera_active and not self.video_path:
+            self.camera_thread.enqueue_focus_ui(value)
+
     def start_camera(self):
         if self.camera_active:
             return
@@ -1197,6 +1295,7 @@ class ImageViewerApp(QWidget):
         self.camera_thread = CameraThread(camera_id, worker, video_path=self.video_path)
         self.camera_thread.frame_ready.connect(self.on_camera_frame_display)  # For real-time display
         self.camera_thread.ocr_frame_ready.connect(self.on_camera_frame_ocr)  # For OCR processing
+        self.camera_thread.camera_focus_state.connect(self._on_camera_focus_state)
         self.camera_thread.start()
         
         # Start OCR processing thread
@@ -1219,6 +1318,10 @@ class ImageViewerApp(QWidget):
         
     def stop_camera(self):
         if self.camera_thread:
+            try:
+                self.camera_thread.camera_focus_state.disconnect(self._on_camera_focus_state)
+            except (TypeError, RuntimeError):
+                pass
             self.camera_thread.stop()
             self.camera_thread = None
             
@@ -1231,6 +1334,8 @@ class ImageViewerApp(QWidget):
             self.camera_button.setText("Start Video" if self.video_path else "Start Camera")
         if self.camera_selector:
             self.camera_selector.setEnabled(True)
+        if not self.video_path:
+            self.focus_slider.setEnabled(False)
         print("Video stopped" if self.video_path else "Camera stopped")
         
     def on_camera_frame_display(self, frame):
@@ -1385,7 +1490,7 @@ class ImageViewerApp(QWidget):
         
         # Update text info
         text_lines = ""
-        text_lines += "   recognized text : confidence score\n\n"
+        text_lines += "  recognized text : confidence score\n\n"
         for i, text in enumerate(self.last_result_text):
             # Extract recognized text and confidence score from OCR result
             recognized_text = text['text']
