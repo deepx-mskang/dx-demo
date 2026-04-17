@@ -214,6 +214,21 @@ class ImageEncoderAsync:
         engine = getattr(self, 'engine', None)
         if engine is None:
             return
+        # Drop native callback if the SDK supports it (avoids use-after-free on teardown).
+        for name in ('unregister_callback', 'clear_callback', 'remove_callback'):
+            fn = getattr(engine, name, None)
+            if not callable(fn):
+                continue
+            try:
+                fn(self._inference_callback)
+            except TypeError:
+                try:
+                    fn()
+                except Exception:
+                    pass
+            except Exception:
+                pass
+            break
         # DXNN API surface varies by build; probe common wait/sync method names.
         for name in ['wait_all', 'waitAll', 'synchronize', 'sync', 'join', 'flush', 'drain', 'wait_for_all_requests']:
             fn = getattr(engine, name, None)
@@ -635,6 +650,7 @@ class MainWindow(QMainWindow):
         self._frame_index = 0
         self._pending_jobs = {}
         self._pending_reqs = {}
+        self._shutting_down = False
 
         self.image_encoder = None
         self.camera_thread = None
@@ -731,7 +747,7 @@ class MainWindow(QMainWindow):
             self.args.texts = previous_texts
 
     def apply_additional_texts(self):
-        """Append new user-entered text lines to the existing text set and refresh the UI."""
+        """Add new user-entered text lines at the top of the list (below the editor) and refresh the UI."""
         raw_lines = self.add_text_editor.toPlainText().splitlines()
         new_lines = [line.strip() for line in raw_lines if line.strip()]
         if not new_lines:
@@ -749,7 +765,7 @@ class MainWindow(QMainWindow):
             self.add_text_editor.clear()
             return
 
-        updated_texts = existing + appended
+        updated_texts = appended + existing
 
         self.apply_text_button.setEnabled(False)
         try:
@@ -800,6 +816,8 @@ class MainWindow(QMainWindow):
 
     def on_frame(self, frame):
         """Show preview; optionally enqueue async image encode (throttled by skip_frame)."""
+        if self._shutting_down:
+            return
         if frame is None:
             self.show_error(
                 "We couldn't open the camera or video file. Check the device path or file location."
@@ -832,6 +850,8 @@ class MainWindow(QMainWindow):
 
     def on_timer(self):
         """Drain completed encodes: similarity per text, bar update, top-2 highlight if ≥ threshold."""
+        if self._shutting_down:
+            return
         if self.image_encoder is None or self.text_features is None:
             return
 
@@ -891,11 +911,33 @@ class MainWindow(QMainWindow):
                 )
 
     def closeEvent(self, event):
-        """Stop capture thread and shut down DXNN engine before exit."""
+        """Stop timers and threads, drain async results, then release DXNN (callback-safe)."""
+        self._shutting_down = True
+
+        if hasattr(self, 'timer') and self.timer is not None:
+            self.timer.stop()
+            try:
+                self.timer.timeout.disconnect(self.on_timer)
+            except TypeError:
+                pass
+
         if self.camera_thread is not None:
+            try:
+                self.camera_thread.frame_ready.disconnect(self.on_frame)
+            except TypeError:
+                pass
             self.camera_thread.stop()
+            self.camera_thread = None
+
         if self.image_encoder is not None:
+            # Drain GUI-thread queue so no pending slot runs after encoder teardown.
+            while True:
+                item = self.image_encoder.get_result(timeout=0)
+                if item is None:
+                    break
             self.image_encoder.close()
+            self.image_encoder = None
+
         event.accept()
 
 
