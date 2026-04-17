@@ -1,0 +1,21 @@
+# Core OCR dependencies
+opencv-python-headless==4.7.0.72
+numpy==1.26.4
+torch==2.3.0
+torchvision==0.18.0
+torchaudio==2.3.0
+onnxruntime==1.18.0
+
+# Image processing dependencies
+opencv-contrib-python==4.7.0.72
+pyside6
+scikit-image
+imgaug
+shapely
+pyclipper
+
+# Utility dependencies
+tqdm
+requests
+
+jiwer
