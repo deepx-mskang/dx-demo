@@ -25,7 +25,7 @@ def notify_launcher_ready() -> None:
         pass
 
 # 전역 변수 및 동기화 설정
-result_queue = queue.Queue(maxsize=10)  # 추론 결과 데이터를 담는 큐
+result_queue = queue.Queue(maxsize=10) # 추론 결과 데이터를 담는 큐
 callback_lock = threading.Lock()
 
 class AsyncDepthAnything:
@@ -53,7 +53,7 @@ class AsyncDepthAnything:
 
         x = img_input.astype(np.float32) / 255.0
         x = (x - self.mean) / self.std
-        x = np.transpose(x, [2, 0, 1])  # HWC -> CHW
+        x = np.transpose(x, [2, 0, 1]) # HWC -> CHW
         x = np.expand_dims(x, 0).astype(np.float32)
         return x
 
@@ -107,7 +107,7 @@ def create_depth_map(depth, grayscale=False):
     if grayscale:
         return cv2.cvtColor(normalized_depth, cv2.COLOR_GRAY2BGR)
     else:
-        return cv2.applyColorMap(normalized_depth, cv2.COLORMAP_INFERNO)
+        return cv2.applyColorMap(normalized_depth, cv2.COLORMAP_TURBO)
 
 def _parse_bg_color_rgb(s: str) -> tuple:
     """R,G,B (0-255) 문자열 → OpenCV용 BGR 튜플."""
@@ -152,10 +152,10 @@ def _draw_fps_overlay(bgr: np.ndarray, fps: float) -> None:
     """반투명 패널 + 외곽선 텍스트로 FPS 표시 (원본 이미지에 in-place)."""
     text = f"{fps:.1f} FPS"
     font = cv2.FONT_HERSHEY_DUPLEX
-    scale = 0.72
-    thick = 2
-    pad_x, pad_y = 16, 11
-    margin = 10
+    scale = 1.08  # 0.72 * 1.5
+    thick = 3
+    pad_x, pad_y = 24, 17
+    margin = 15
     (tw, th), bl = cv2.getTextSize(text, font, scale, thick)
     box_w = tw + pad_x * 2
     box_h = th + bl + pad_y * 2
@@ -170,7 +170,7 @@ def _draw_fps_overlay(bgr: np.ndarray, fps: float) -> None:
     panel = np.full_like(roi, (38, 40, 44), dtype=np.uint8)
     blended = cv2.addWeighted(roi, 0.52, panel, 0.48, 0)
     bgr[y0:y1, x0:x1] = blended
-    stripe_w = min(4, x1 - x0)
+    stripe_w = min(6, x1 - x0)
     if stripe_w > 0:
         st = bgr[y0:y1, x0 : x0 + stripe_w].astype(np.float32)
         accent = np.array([[[92, 168, 255]]], dtype=np.float32)  # BGR warm accent
@@ -210,6 +210,55 @@ def _draw_fps_overlay(bgr: np.ndarray, fps: float) -> None:
         thick,
         cv2.LINE_AA,
     )
+
+
+def _draw_model_name_overlay(bgr: np.ndarray, model_path: str) -> None:
+    """화면 맨 위 중앙에 사용 중인 모델 파일명 표시."""
+    name = os.path.basename(model_path)
+    text = f"Model: {name}"
+    font = cv2.FONT_HERSHEY_DUPLEX
+    scale = 0.93  # 0.62 * 1.5
+    thick = 2
+    pad_x, pad_y = 21, 14
+    margin = 12
+    (tw, th), bl = cv2.getTextSize(text, font, scale, thick)
+    box_w = tw + pad_x * 2
+    box_h = th + bl + pad_y * 2
+    h_img, w_img = bgr.shape[:2]
+    x0 = max(margin, (w_img - box_w) // 2)
+    y0 = margin
+    x1 = min(x0 + box_w, w_img)
+    y1 = min(y0 + box_h, h_img)
+    if x1 <= x0 + 4 or y1 <= y0 + 4:
+        return
+    roi = bgr[y0:y1, x0:x1]
+    panel = np.full_like(roi, (32, 34, 38), dtype=np.uint8)
+    bgr[y0:y1, x0:x1] = cv2.addWeighted(roi, 0.45, panel, 0.55, 0)
+    cv2.rectangle(bgr, (x0, y0), (x1 - 1, y1 - 1), (80, 86, 94), 1, cv2.LINE_AA)
+    tx = x0 + pad_x
+    ty = y0 + pad_y + th
+    for ox, oy in ((-1, -1), (-1, 1), (1, -1), (1, 1), (0, -1), (0, 1)):
+        cv2.putText(
+            bgr,
+            text,
+            (tx + ox, ty + oy),
+            font,
+            scale,
+            (0, 0, 0),
+            thick + 1,
+            cv2.LINE_AA,
+        )
+    cv2.putText(
+        bgr,
+        text,
+        (tx, ty),
+        font,
+        scale,
+        (220, 224, 230),
+        thick,
+        cv2.LINE_AA,
+    )
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -303,22 +352,23 @@ def main():
                 # 결과 처리 (ColorMap 적용)
                 depth_colored = create_depth_map(pred, args.grayscale)
 
-                # 화면 결합
+                # -s: 깊이 시각화를 카메라 입력과 동일 (W×H)로 맞춰 원본 옆에 붙임
                 if args.side:
-                    if orig.shape[:2] != depth_colored.shape[:2]:
-                        orig = cv2.resize(
-                            orig, (depth_colored.shape[1], depth_colored.shape[0])
-                        )
-                    display_content = np.concatenate((orig, depth_colored), axis=1)
+                    oh, ow = orig.shape[:2]
+                    depth_scaled = cv2.resize(
+                        depth_colored,
+                        (ow, oh),
+                        interpolation=cv2.INTER_LINEAR,
+                    )
+                    display_content = np.concatenate((orig, depth_scaled), axis=1)
                 else:
                     display_content = depth_colored
 
-                _draw_fps_overlay(display_content, fps_display)
-
-                scaled = cv2.resize(display_content, (1920, 512))
                 frame_show = _letterbox_to_screen(
-                    scaled, screen_w, screen_h, args.margin_bgr
+                    display_content, screen_w, screen_h, args.margin_bgr
                 )
+                _draw_fps_overlay(frame_show, fps_display)
+                _draw_model_name_overlay(frame_show, args.model)
                 cv2.imshow(win_name, frame_show)
                 if not window_fullscreen:
                     cv2.setWindowProperty(
@@ -333,7 +383,7 @@ def main():
                     launcher_ready = True
 
             # 'q' or 'ESC' 키를 누르면 종료
-            key = cv2.waitKey(10) & 0xFF
+            key = cv2.waitKey(1) & 0xFF
             if key == ord("q") or key == 27:
                 time.sleep(0.5)
                 break

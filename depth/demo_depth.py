@@ -32,7 +32,7 @@ class AsyncDepthAnything:
     def __init__(self, model_path):
         print(f"Initializing DX Engine (Async Mode) with Depth Anything...")
         self.engine = InferenceEngine(model_path)
-        
+
         # 모델 입력 정보 가져오기 (NCHW 또는 NHWC 대응)
         input_info = self.engine.get_input_tensors_info()[0]["shape"]
         # 샘플 코드 1번의 형식을 따름: [Batch, Channel, Height, Width] (NCHW)
@@ -41,7 +41,7 @@ class AsyncDepthAnything:
 
         # 콜백 함수 등록 [cite: 2682, 4973]
         self.engine.register_callback(self.inference_callback)
-        
+
         # 정규화 파라미터
         self.mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
         self.std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
@@ -50,7 +50,7 @@ class AsyncDepthAnything:
         """이미지 전처리: BGR->RGB, Resize, Normalize, NCHW 변환"""
         img_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         img_input = cv2.resize(img_rgb, (self.net_w, self.net_h))
-        
+
         x = img_input.astype(np.float32) / 255.0
         x = (x - self.mean) / self.std
         x = np.transpose(x, [2, 0, 1]) # HWC -> CHW
@@ -62,7 +62,7 @@ class AsyncDepthAnything:
         # user_args에는 원본 프레임이 들어있음
         original_frame = user_args
         prediction = ie_outputs[0]
-        
+
         with callback_lock:
             # 처리 속도가 큐를 넣는 속도보다 느릴 경우를 대비해 가장 오래된 결과 제거
             if result_queue.full():
@@ -298,10 +298,12 @@ def main():
     FPS_UPDATE_INTERVAL = 1.0
 
     print("Start Async Processing. Press 'q' to exit.")
+
     win_name = "Depth Anything v2 Demo"
     cv2.namedWindow(win_name, cv2.WINDOW_NORMAL)
     window_fullscreen = False
     launcher_ready = False
+
     try:
         while True:
             now = time.time()
@@ -347,7 +349,7 @@ def main():
                 if not window_fullscreen:
                     cv2.setWindowProperty(
                         win_name,
-                         cv2.WND_PROP_FULLSCREEN,
+                        cv2.WND_PROP_FULLSCREEN,
                         cv2.WINDOW_FULLSCREEN,
                     )
                     window_fullscreen = True
