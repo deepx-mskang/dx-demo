@@ -40,8 +40,8 @@ constexpr int kCameraCaptureFps = 30;
 const char *kFaceRecognitionWindowTitle = "Face Recognition";
 const char *kPoseSegmentationWindowTitle = "Pose Estimation & Segmentation";
 const char *kMobedDetectionWindowTitle = "MobED Object Detection";
-const char *kMobedStaticPictureWindowTitle = "MobED picture";
-const char *kGalleryWindowTitle = "gallary";
+const char *kMobedStaticPictureWindowTitle = "MobED (Delivery Robot)";
+const char *kGalleryWindowTitle = "Gallery";
 
 /** No toolbar/status strip under title (default is WINDOW_GUI_EXPANDED). */
 constexpr int kImshowWindowFlags = cv::WINDOW_GUI_NORMAL | cv::WINDOW_AUTOSIZE;

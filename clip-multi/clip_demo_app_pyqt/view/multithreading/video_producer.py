@@ -92,6 +92,10 @@ class VideoProducer(QObject):
                 self.__video_capture = cv2.VideoCapture(self.__video_path_current, cv2.CAP_FFMPEG)
             else:
                 self.__change_video(True)
+        elif self.__is_camera_source:
+            self.__video_capture = cv2.VideoCapture(self.__video_path_current, cv2.CAP_V4L2)
+            fourcc = cv2.VideoWriter_fourcc(*'MJPG')
+            self.__video_capture.set(cv2.CAP_PROP_FOURCC, fourcc)
         else:
             self.__video_capture = cv2.VideoCapture(self.__video_path_current)
 
@@ -101,6 +105,12 @@ class VideoProducer(QObject):
         else:
             self.__video_fps = int(round(self.__video_capture.get(cv2.CAP_PROP_FPS), 0))
             logging.debug("channel_idx:" + str(self._channel_idx) + f"FPS: {self.__video_fps}")
+
+        if self.__is_camera_source:
+            self.__video_capture.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+            self.__video_capture.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+            #self.__video_capture.set(cv2.CAP_PROP_FPS, 15)
+            print(f"FPS:{self.__video_capture.get(cv2.CAP_PROP_FPS)} RES:{self.__video_capture.get(cv2.CAP_PROP_FRAME_HEIGHT)}x{self.__video_capture.get(cv2.CAP_PROP_FRAME_WIDTH)}")
 
         self.__current_video_frame = np.zeros((self.__video_label_size[1], self.__video_label_size[0], 3), dtype=np.uint8)
     

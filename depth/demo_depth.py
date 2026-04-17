@@ -25,7 +25,7 @@ def notify_launcher_ready() -> None:
         pass
 
 # 전역 변수 및 동기화 설정
-result_queue = queue.Queue(maxsize=10) # 추론 결과 데이터를 담는 큐
+result_queue = queue.Queue(maxsize=4) # 추론 결과 데이터를 담는 큐
 callback_lock = threading.Lock()
 
 class AsyncDepthAnything:

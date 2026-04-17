@@ -3,6 +3,8 @@ import math
 from PyQt5.QtWidgets import QMainWindow, QApplication
 from PyQt5.QtGui import QGuiApplication, QFont
 
+import os
+from pathlib import Path
 
 class UIConfig:
     # Settings View
@@ -26,7 +28,7 @@ class UIConfig:
 
     # video processing settings
     consumer_queue_size = 10
-    consumer_num_of_inference_per_sec = 3
+    consumer_num_of_inference_per_sec = 4
     consumer_max_np_array_similarity_queue = 5
     producer_video_fps_sync_mode = False
     consumer_video_fps_sync_mode = False
@@ -52,7 +54,7 @@ class UIConfig:
 
     # dynamic font mode
     dynamic_font_mode = "fit"
-    min_font_size = 11
+    min_font_size = 13
     fix_font_size = None
 
 
@@ -69,7 +71,7 @@ class UIHelper:
         self.large_font_prefix_text_fixed_width = 200
 
         self.small_font = QFont() 
-        self.small_font.setPointSize(11)
+        self.small_font.setPointSize(13)
         self.small_font_line_height = 22
         self.small_font_bottom_padding = 28
         self.small_font_prefix_text_fixed_width = 100
@@ -113,6 +115,21 @@ class UIHelper:
         print(f"Screen resolution: {self.window_w}x{self.window_h}, Portrait: {self.is_portrait}")
         print(f"Screen video_area: {self.video_area_w}x{self.video_area_h}")
         print(f"Screen video_size: {self.video_size}")
+
+        path = os.environ.get("DX_LAUNCHER_READY_FILE")
+        if not path:
+            return
+        try:
+            p = Path(path)
+            p.parent.mkdir(parents=True, exist_ok=True)
+            # 한 줄 상태만 남기고 싶으면:
+            p.write_text("ready\n", encoding="utf-8")
+            # 또는 이미 런처가 만든 파일이 있으면:
+            # with p.open("a", encoding="utf-8") as f:
+            #     f.write("ready\n")
+        except OSError:
+            pass
+
 
     @staticmethod
     def __is_portrait_mode(window_w, window_h):

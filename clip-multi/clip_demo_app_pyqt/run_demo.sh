@@ -8,14 +8,14 @@ echo "2-2: Multi Channel Demo (Settings Mode)"
 echo "2-3: Multi Channel Demo (Camera Mode & Settings Mode)"
 echo "0: Default Demo"
 
-read -t 10 -p "which AI demo do you want to run:(timeout:10s, default:0)" select
+read -t 1 -p "which AI demo do you want to run:(timeout:10s, default:0)" select
 
 case $select in
         1)./run_clip_demo_pyqt.sh --number_of_channels 1;;
         1-2)./run_clip_demo_pyqt.sh --number_of_channels 1 --settings_mode 1;;
         1-3)./run_clip_demo_pyqt.sh --number_of_channels 1 --settings_mode 1 --camera_mode 1 --merge_central_grid 1;;
         2)./run_clip_demo_pyqt.sh --number_of_channels 16;;
-        2-2)./run_clip_demo_pyqt.sh --number_of_channels 16 --settings_mode 1;;
-        2-3)./run_clip_demo_pyqt.sh --number_of_channels 16 --settings_mode 1 --camera_mode 1 --merge_central_grid 1;;
-        *)./run_clip_demo_pyqt.sh;;
+        2-2)./run_clip_demo_pyqt.sh --number_of_channels 9 --settings_mode 0;;
+        2-3)./run_clip_demo_pyqt.sh --number_of_channels 16 --settings_mode 0 --camera_mode 1 --merge_central_grid 1;;
+        *)./run_clip_demo_pyqt.sh --number_of_channels 9 --settings_mode 0 --camera_mode 1 --merge_central_grid 1;;
 esac

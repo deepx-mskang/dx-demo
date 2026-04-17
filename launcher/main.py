@@ -77,16 +77,17 @@ LAUNCHER_ITEMS = [
         "image": "assets/demo-depth.png",
         "video_script": "../scripts/run_depth_video.sh",
         "camera_script": "../scripts/run_depth.sh",
+        "camera_label": "Cam (518)",
+        "extra_buttons": [{"label": "Cam (224)", "script": "../scripts/run_depth_224.sh"}],
         "loading_sec": 5,
     },
     {
         "title": "PaddleOCR v5",
         "image": "assets/demo-ocr.gif",
-        "video_script": "../scripts/run_ocr.sh",
-        "camera_script": "../scripts/run_ocr_autofocus_dis.sh",
-        "loading_sec": 20,
-        "video_label": "Run AF-En",
-        "camera_label": "Run AF-Dis",
+        "video_script": "../scripts/run_ocr_web.sh",
+        "camera_script": "../scripts/run_ocr.sh",
+        "loading_sec": 30,
+        "video_label": "Web Based",
     },
     {
         "title": "CLIP Single-channel",
@@ -521,7 +522,7 @@ class MainWindow(QWidget):
             return
         geo = screen.availableGeometry()
         x = geo.x() + max(0, (geo.width() - self.width()) // 2)
-        y = geo.y() + 30#max(0, (geo.height() - self.height()) // 2)
+        y = geo.y() + 10#max(0, (geo.height() - self.height()) // 2)
         self.move(x, y)
 
 

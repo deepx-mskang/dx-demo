@@ -1,8 +1,10 @@
 from __future__ import annotations
 import math
 
+from PyQt5.QtCore import Qt
+from PyQt5.QtGui import QKeySequence
 from PyQt5.QtWidgets import QMainWindow, QVBoxLayout, QLabel, QLineEdit, QSpinBox, QCheckBox, QPushButton, QWidget, \
-    QGridLayout, QComboBox, QGroupBox, QHBoxLayout
+    QGridLayout, QComboBox, QGroupBox, QHBoxLayout, QShortcut
 from clip_demo_app_pyqt.common.config.ui_config import UIConfig
 
 
@@ -169,6 +171,9 @@ class SettingsView(QMainWindow):
         container = QWidget()
         container.setLayout(layout)
         self.setCentralWidget(container)
+
+        QShortcut(QKeySequence(Qt.Key_Escape), self, activated=self.close)
+        QShortcut(QKeySequence(Qt.Key_Q), self, activated=self.close)
 
     def apply_settings(self):
         # Apply the values entered by the user

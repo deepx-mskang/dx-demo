@@ -9,12 +9,12 @@ from typing import List
 
 import qdarkstyle
 from PyQt5.QtCore import Qt, QObject, QEvent, QUrl, QTimer
-from PyQt5.QtGui import QPixmap, QFont, QColor, QMovie, QFontMetrics
+from PyQt5.QtGui import QPixmap, QFont, QColor, QMovie, QFontMetrics, QKeySequence
 from PyQt5.QtMultimedia import QMediaPlayer, QMediaContent
 from PyQt5.QtMultimediaWidgets import QVideoWidget
 from PyQt5.QtWidgets import QWidget, QVBoxLayout, QLabel, QPushButton, QMainWindow, QLineEdit, \
     QHBoxLayout, QGridLayout, QDialog, QScrollArea, QDoubleSpinBox, QGroupBox, QCheckBox, QComboBox, QFileDialog, \
-    QSizePolicy
+    QSizePolicy, QShortcut
 from overrides import overrides
 from pyqttoast import ToastPreset, ToastPosition, Toast
 
@@ -38,7 +38,7 @@ class CustomToastPosition(Enum):
 class VideoToast(QDialog):
     def __init__(self, title, media_path, position, parent=None):
         super().__init__(parent)
-        self.__duration = 5000
+        self.__duration = 4000
         self.__parent = parent
         self.__media_path = media_path
         self.__position = position
@@ -555,6 +555,9 @@ class ClipView(Base, QMainWindow, metaclass=CombinedMeta):
 
         if self.ui_config.fullscreen_mode:
             self.showFullScreen()
+
+        QShortcut(QKeySequence(Qt.Key_Escape), self, activated=self.close_application)
+        QShortcut(QKeySequence(Qt.Key_Q), self, activated=self.close_application)
         
         # init for video resize resolution
         self._refresh_video_size()
@@ -836,8 +839,8 @@ class ClipView(Base, QMainWindow, metaclass=CombinedMeta):
         # Central camera channel layout
         [merged_center_grid_layout, merged_center_grid_sentence_output_layout,
          merged_center_grid_label] = self.__generate_video_box_impl(
-            self.ui_helper.large_font, self.ui_helper.large_font_line_height,
-            self.ui_helper.large_font_bottom_padding, border_color="yellow")
+            self.ui_helper.small_font, self.ui_helper.small_font_line_height,
+            self.ui_helper.small_font_bottom_padding, border_color="yellow")
 
         # Add camera layout to the central area
         video_grid_layout.addLayout(merged_center_grid_layout, grid.center_start, grid.center_start,
