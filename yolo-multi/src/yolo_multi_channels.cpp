@@ -466,8 +466,6 @@ DXRT_TRY_CATCH_BEGIN
 #if !__riscv
     if (!g_no_display) {
         cv::namedWindow(DISPLAY_WINDOW_NAME, cv::WINDOW_NORMAL);
-        cv::setWindowProperty(DISPLAY_WINDOW_NAME, cv::WND_PROP_FULLSCREEN, cv::WINDOW_FULLSCREEN);
-        cv::moveWindow(DISPLAY_WINDOW_NAME, 0, 0);
     }
 #endif
 
@@ -502,6 +500,9 @@ DXRT_TRY_CATCH_BEGIN
 
     notify_launcher_ready();
 
+#if !__riscv
+    int fullscreenEnforceFrames = 0;
+#endif
     while(true)
     {
         frameCount = 0.1;
@@ -654,6 +655,10 @@ DXRT_TRY_CATCH_BEGIN
 #else
         int key = -1;
         if (!g_no_display) {
+            if (fullscreenEnforceFrames < 10) {
+                cv::setWindowProperty(DISPLAY_WINDOW_NAME, cv::WND_PROP_FULLSCREEN, cv::WINDOW_FULLSCREEN);
+                fullscreenEnforceFrames++;
+            }
             cv::imshow(DISPLAY_WINDOW_NAME, outFrame);
             key = cv::waitKey(1);
         } else {
