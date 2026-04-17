@@ -665,8 +665,21 @@ class MainWindow(QMainWindow):
         self.timer.timeout.connect(self.on_timer)
         self.timer.start(30)
 
-        QShortcut(QKeySequence(Qt.Key_Escape), self, activated=self.close)
-        QShortcut(QKeySequence(Qt.Key_Q), self, activated=self.close)
+        # ESC: quit from anywhere. Q: quit unless typing in the add-text field (so "q" can be typed).
+        esc_quit = QShortcut(QKeySequence(Qt.Key_Escape), self)
+        esc_quit.setContext(Qt.ApplicationShortcut)
+        esc_quit.activated.connect(self.close)
+        q_quit = QShortcut(QKeySequence(Qt.Key_Q), self)
+        q_quit.setContext(Qt.ApplicationShortcut)
+        q_quit.activated.connect(self._close_on_q_unless_add_text_focused)
+
+    def _close_on_q_unless_add_text_focused(self):
+        fw = QApplication.focusWidget()
+        if fw is not None and (
+            fw is self.add_text_editor or self.add_text_editor.isAncestorOf(fw)
+        ):
+            return
+        self.close()
 
     def _refresh_source_info_label(self):
         """One-line summary: capture source and model files (for demos)."""
