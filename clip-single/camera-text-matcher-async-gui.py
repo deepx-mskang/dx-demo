@@ -271,6 +271,47 @@ def preprocess_frame(frame: np.ndarray, transform):
     return image_array
 
 
+def crop_center(frame: np.ndarray, target_width: int, target_height: int) -> np.ndarray:
+    """Return a centered crop of the given size from the input frame."""
+    h, w = frame.shape[:2]
+    if target_width >= w or target_height >= h:
+        return frame
+    x = (w - target_width) // 2
+    y = (h - target_height) // 2
+    return frame[y:y + target_height, x:x + target_width]
+
+
+def is_video_file_source(input_source) -> bool:
+    """True when input_source is a path to an on-disk video file."""
+    return isinstance(input_source, str) and os.path.isfile(input_source)
+
+
+def describe_frame(frame: np.ndarray) -> str:
+    """Compact frame diagnostics for camera/preview debugging."""
+    if frame is None:
+        return 'None'
+    try:
+        channel_mean = frame.mean(axis=(0, 1))
+        mean_text = ','.join(f'{v:.1f}' for v in channel_mean)
+        return (
+            f'shape={frame.shape}, dtype={frame.dtype}, strides={frame.strides}, '
+            f'min={int(frame.min())}, max={int(frame.max())}, mean={frame.mean():.1f}, '
+            f'channel_mean=[{mean_text}], contiguous={frame.flags.c_contiguous}'
+        )
+    except Exception as e:
+        return f'shape={getattr(frame, "shape", None)}, stats_error={e}'
+
+
+def is_nearly_black_frame(frame: np.ndarray) -> bool:
+    """True when the captured pixels are effectively all black."""
+    if frame is None or frame.size == 0:
+        return True
+    try:
+        return float(frame.mean()) < 1.0 and int(frame.max()) <= 3
+    except Exception:
+        return False
+
+
 def normalize_features(features):
     """L2-normalize embedding rows for cosine similarity via dot product."""
     if isinstance(features, torch.Tensor):
@@ -339,6 +380,11 @@ class CameraThread(QThread):
         self.height = height
         self.fps = fps
         self._stop = threading.Event()
+        self._frame_count = 0
+        self._black_frame_count = 0
+        self._read_fail_count = 0
+        self._saved_black_debug_frame = False
+        self._saved_nonblack_debug_frame = False
 
     def _resolve_capture_source(self):
         """Numeric string sources become int indices for cv2.VideoCapture."""
@@ -348,12 +394,33 @@ class CameraThread(QThread):
 
     def _is_video_file(self):
         """True when input_source is a path to an on-disk video file."""
-        return isinstance(self.input_source, str) and os.path.isfile(self.input_source)
+        return is_video_file_source(self.input_source)
+
+    def _should_try_v4l2(self, capture_source):
+        """Linux camera devices are more reliable through V4L2 than GStreamer URI probing."""
+        if isinstance(capture_source, int):
+            return True
+        return isinstance(capture_source, str) and capture_source.startswith('/dev/video')
+
+    def _open_capture(self, capture_source):
+        """Open capture source, preferring V4L2 for Linux camera devices."""
+        if self._should_try_v4l2(capture_source):
+            cap = cv2.VideoCapture(capture_source, cv2.CAP_V4L2)
+            print(f'Camera debug: tried CAP_V4L2, opened={cap.isOpened()}')
+            if cap.isOpened():
+                return cap
+            cap.release()
+            print('Camera debug: CAP_V4L2 failed; falling back to OpenCV default backend')
+        return cv2.VideoCapture(capture_source)
 
     def run(self):
         """Capture loop: emit frames until stop(); falls back to a static test image if open fails."""
         capture_source = self._resolve_capture_source()
-        cap = cv2.VideoCapture(capture_source)
+        print(
+            f'Camera debug: opening input={self.input_source!r}, '
+            f'resolved={capture_source!r}, requested={self.width}x{self.height}@{self.fps}'
+        )
+        cap = self._open_capture(capture_source)
         use_test_image = False
         is_video_file = self._is_video_file()
         frame_interval = max(0, (1.0 / max(1, self.fps)) - 0.005)
@@ -369,6 +436,10 @@ class CameraThread(QThread):
         else:
             source_kind = 'video file' if is_video_file else 'camera'
             print(f"{source_kind.capitalize()} opened successfully: {self.input_source}")
+            try:
+                print(f'Camera debug: OpenCV backend={cap.getBackendName()}')
+            except Exception as e:
+                print(f'Camera debug: backend name unavailable: {e}')
             if is_video_file:
                 source_fps = cap.get(cv2.CAP_PROP_FPS)
                 if source_fps and source_fps > 0:
@@ -378,6 +449,13 @@ class CameraThread(QThread):
                 cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
                 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
                 cap.set(cv2.CAP_PROP_FPS, self.fps)
+                actual_width = cap.get(cv2.CAP_PROP_FRAME_WIDTH)
+                actual_height = cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
+                actual_fps = cap.get(cv2.CAP_PROP_FPS)
+                print(
+                    f'Camera requested {self.width}x{self.height}@{self.fps}, '
+                    f'actual {actual_width:.0f}x{actual_height:.0f}@{actual_fps:.1f}'
+                )
 
         while not self._stop.is_set():
             if use_test_image:
@@ -385,12 +463,35 @@ class CameraThread(QThread):
             else:
                 ret, frame = cap.read()
                 if not ret:
+                    self._read_fail_count += 1
+                    if self._read_fail_count <= 5 or self._read_fail_count % 30 == 0:
+                        print(
+                            f'Camera debug: cap.read() failed '
+                            f'count={self._read_fail_count}, source={self.input_source!r}'
+                        )
                     if is_video_file:
                         cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
                         continue
                     continue
                 if is_video_file:
                     frame = cv2.resize(frame, (self.width, self.height))
+            self._frame_count += 1
+            if is_nearly_black_frame(frame):
+                self._black_frame_count += 1
+                if not self._saved_black_debug_frame:
+                    self._saved_black_debug_frame = True
+                    cv2.imwrite('debug_camera_black_frame.png', frame)
+                    print('Camera debug: saved black sample to debug_camera_black_frame.png')
+            elif not self._saved_nonblack_debug_frame:
+                self._saved_nonblack_debug_frame = True
+                cv2.imwrite('debug_camera_nonblack_frame.png', frame)
+                print('Camera debug: saved non-black sample to debug_camera_nonblack_frame.png')
+
+            if self._frame_count <= 10 or self._frame_count % max(1, self.fps * 5) == 0:
+                print(
+                    f'Camera debug: frame #{self._frame_count}, '
+                    f'black_frames={self._black_frame_count}, {describe_frame(frame)}'
+                )
             self.frame_ready.emit(frame)
             time.sleep(frame_interval)
 
@@ -513,9 +614,11 @@ class MainWindow(QMainWindow):
         container.setLayout(main_layout)
 
         # Left column: live BGR preview + status / best-match line
+        self.preview_width = 1280
+        self.preview_height = 720
         self.video_label = QLabel('Camera feed not ready')
         #self.video_label.setFixedSize(960, 720)
-        self.video_label.setFixedSize(1280, 720)
+        self.video_label.setFixedSize(self.preview_width, self.preview_height)
         self.video_label.setAlignment(Qt.AlignCenter)
         self.video_label.setStyleSheet('background-color: #111; color: #fff;')
 
@@ -644,6 +747,7 @@ class MainWindow(QMainWindow):
         self.texts = list(args.texts)
         self.text_encoder = None
         self.tokenizer = None
+        self._is_video_input = is_video_file_source(args.input)
 
         # Async pipeline: monotonic job_id maps pending encode → frame copy and request id
         self._job_id = 0
@@ -651,6 +755,7 @@ class MainWindow(QMainWindow):
         self._pending_jobs = {}
         self._pending_reqs = {}
         self._shutting_down = False
+        self._preview_debug_count = 0
 
         self.image_encoder = None
         self.camera_thread = None
@@ -838,8 +943,35 @@ class MainWindow(QMainWindow):
             # Don't exit, just show error
             return
 
-        qimg = QImage(frame.data, frame.shape[1], frame.shape[0], frame.strides[0], QImage.Format_BGR888)
-        self.video_label.setPixmap(QPixmap.fromImage(qimg).scaled(self.video_label.size(), Qt.KeepAspectRatio))
+        preview_frame = frame if self._is_video_input else crop_center(
+            frame, self.preview_width, self.preview_height
+        )
+        preview_rgb = cv2.cvtColor(preview_frame, cv2.COLOR_BGR2RGB)
+        height, width = preview_rgb.shape[:2]
+        bytes_per_line = preview_rgb.strides[0]
+        qimg = QImage(preview_rgb.data, width, height, bytes_per_line, QImage.Format_RGB888)
+        qimg = qimg.copy()
+        self._preview_debug_count += 1
+        should_log_preview = self._preview_debug_count <= 10 or self._preview_debug_count % 150 == 0
+        if should_log_preview:
+            print(
+                f'Preview debug: frame #{self._preview_debug_count}, '
+                f'source=({describe_frame(frame)}), preview=({describe_frame(preview_frame)}), '
+                f'qimg_null={qimg.isNull()}, qimg={qimg.width()}x{qimg.height()}, '
+                f'bytes_per_line={bytes_per_line}'
+            )
+            if is_nearly_black_frame(preview_frame):
+                print(
+                    'Preview debug: preview pixels are nearly all black; '
+                    'the UI is displaying what the camera capture supplied.'
+                )
+        if qimg.isNull():
+            self.show_error('Preview QImage creation failed for current frame.')
+        else:
+            pixmap = QPixmap.fromImage(qimg)
+            if should_log_preview:
+                print(f'Preview debug: pixmap_null={pixmap.isNull()}, size={pixmap.size()}')
+            self.video_label.setPixmap(pixmap.scaled(self.video_label.size(), Qt.KeepAspectRatio))
 
         frame_index = self._frame_index
         self._frame_index += 1
@@ -972,8 +1104,8 @@ def main():
     parser.add_argument('--texts', type=str, nargs='+', required=True)
     parser.add_argument('--input', type=str, default=None, help='Camera device, camera index, or video file path')
     parser.add_argument('--camera', type=str, default='/dev/video0')
-    parser.add_argument('--width', type=int, default=1280)
-    parser.add_argument('--height', type=int, default=720)
+    parser.add_argument('--width', type=int, default=1920)
+    parser.add_argument('--height', type=int, default=1080)
     parser.add_argument('--fps', type=int, default=30)
     parser.add_argument('--skip-frames', dest='skip_frame', type=int, default=2)
 
