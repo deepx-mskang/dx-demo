@@ -7,7 +7,6 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
-#include <cstring>
 #include <deque>
 #include <fstream>
 #include <iomanip>
@@ -16,7 +15,6 @@
 #include <memory>
 #include <mutex>
 #include <queue>
-#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -24,10 +22,7 @@
 
 #include <cerrno>
 #include <execinfo.h>
-#include <fcntl.h>
 #include <limits.h>
-#include <linux/videodev2.h>
-#include <sys/ioctl.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -238,96 +233,6 @@ std::string resolved_path(const std::string &path)
     return resolved;
 }
 
-std::string camera_device_path(int camera_index)
-{
-    return "/dev/video" + std::to_string(camera_index);
-}
-
-bool get_v4l2_control(int camera_index, uint32_t control_id, const char *name, int *value)
-{
-    if (value == nullptr)
-    {
-        return false;
-    }
-
-    const std::string path = camera_device_path(camera_index);
-    const int fd = ::open(path.c_str(), O_RDWR | O_NONBLOCK);
-    if (fd < 0)
-    {
-        std::cerr << "Warning: could not open " << path << " to read " << name
-                  << ": " << std::strerror(errno) << std::endl;
-        return false;
-    }
-
-    struct v4l2_control control {};
-    control.id = control_id;
-    const bool ok = (::ioctl(fd, VIDIOC_G_CTRL, &control) == 0);
-    if (!ok)
-    {
-        std::cerr << "Warning: could not read camera control " << name
-                  << " from " << path << ": " << std::strerror(errno) << std::endl;
-    }
-    else
-    {
-        *value = control.value;
-    }
-
-    ::close(fd);
-    return ok;
-}
-
-bool set_v4l2_control(int camera_index, uint32_t control_id, const char *name, int value)
-{
-    const std::string path = camera_device_path(camera_index);
-    const int fd = ::open(path.c_str(), O_RDWR | O_NONBLOCK);
-    if (fd < 0)
-    {
-        std::cerr << "Warning: could not open " << path << " to set " << name
-                  << ": " << std::strerror(errno) << std::endl;
-        return false;
-    }
-
-    struct v4l2_control control {};
-    control.id = control_id;
-    control.value = value;
-    const bool ok = (::ioctl(fd, VIDIOC_S_CTRL, &control) == 0);
-    if (!ok)
-    {
-        std::cerr << "Warning: could not set camera control " << name
-                  << "=" << value << " on " << path << ": " << std::strerror(errno) << std::endl;
-    }
-    else
-    {
-        std::cout << "Camera control: " << name << "=" << value << " on " << path << std::endl;
-    }
-
-    ::close(fd);
-    return ok;
-}
-
-void configure_camera_controls(int camera_index, bool disable_dynamic_framerate)
-{
-    if (!disable_dynamic_framerate)
-    {
-        std::cout << "Camera dynamic framerate control: leaving device default enabled/unchanged" << std::endl;
-        return;
-    }
-
-    set_v4l2_control(camera_index,
-                     V4L2_CID_EXPOSURE_AUTO_PRIORITY,
-                     "exposure_dynamic_framerate",
-                     0);
-
-    int value = 0;
-    if (get_v4l2_control(camera_index,
-                         V4L2_CID_EXPOSURE_AUTO_PRIORITY,
-                         "exposure_dynamic_framerate",
-                         &value))
-    {
-        std::cout << "Camera control actual: exposure_dynamic_framerate=" << value << std::endl;
-    }
-}
-
 std::string default_model_path()
 {
     const std::string root = DEPTH_ROOT_DIR;
@@ -360,10 +265,7 @@ struct Options
     std::string camera_backend = "any";
     std::string camera_fourcc;
     bool side_by_side = false;
-    bool grayscale = false;
     bool camera_only = false;
-    bool disable_dynamic_framerate = false;
-    cv::Scalar margin_bgr = cv::Scalar(0, 0, 0);
 };
 
 void print_startup_diagnostics(const Options &options)
@@ -395,7 +297,6 @@ struct DepthResult
     uint64_t frame_id = 0;
     cv::Mat original_bgr;
     cv::Mat depth;
-    double latency_ms = 0.0;
 };
 
 std::mutex g_camera_mutex;
@@ -606,50 +507,12 @@ bool parse_int_value(const std::string &value, int *out)
     }
 }
 
-bool parse_bg_color_rgb(const std::string &value, cv::Scalar *margin_bgr)
-{
-    std::vector<int> parts;
-    std::size_t start = 0;
-    while (start <= value.size())
-    {
-        const std::size_t comma = value.find(',', start);
-        const std::string token = value.substr(
-            start, comma == std::string::npos ? std::string::npos : comma - start);
-        int parsed = 0;
-        if (!parse_int_value(token, &parsed))
-        {
-            return false;
-        }
-        parts.push_back(parsed);
-        if (comma == std::string::npos)
-        {
-            break;
-        }
-        start = comma + 1;
-    }
-
-    if (parts.size() != 3)
-    {
-        return false;
-    }
-    for (int v : parts)
-    {
-        if (v < 0 || v > 255)
-        {
-            return false;
-        }
-    }
-    *margin_bgr = cv::Scalar(parts[2], parts[1], parts[0]);
-    return true;
-}
-
 void print_usage(const char *argv0)
 {
     std::cout
         << "Usage: " << argv0 << " [OPTIONS]\n"
         << "  -m, --model <PATH>          Path to .dxnn model\n"
         << "  -s, --side                  Show original and depth map side by side\n"
-        << "  -g, --grayscale             Use grayscale depth map\n"
         << "      --camera-index <N>      Camera index (default: 0)\n"
         << "      --width <N>             Camera width (default: 640)\n"
         << "      --height <N>            Camera height (default: 480)\n"
@@ -660,9 +523,6 @@ void print_usage(const char *argv0)
         << "                              Set OpenCV camera buffer size when N > 0\n"
         << "      --camera-fourcc CODE    Request camera pixel format, e.g. MJPG or YUYV\n"
         << "      --camera-only           Benchmark camera capture without NPU/display\n"
-        << "      --disable-dynamic-framerate\n"
-        << "                              Set camera exposure dynamic framerate control to 0\n"
-        << "      --bg-color R,G,B        Fullscreen letterbox margin color (default: 0,0,0)\n"
         << "  -h, --help                  Show this help\n";
 }
 
@@ -692,10 +552,6 @@ bool parse_args(int argc, char **argv, Options *options)
         else if (arg == "-s" || arg == "--side")
         {
             options->side_by_side = true;
-        }
-        else if (arg == "-g" || arg == "--grayscale")
-        {
-            options->grayscale = true;
         }
         else if (arg == "--camera-index")
         {
@@ -785,23 +641,6 @@ bool parse_args(int argc, char **argv, Options *options)
         {
             options->camera_only = true;
         }
-        else if (arg == "--allow-dynamic-framerate")
-        {
-            options->disable_dynamic_framerate = false;
-        }
-        else if (arg == "--disable-dynamic-framerate")
-        {
-            options->disable_dynamic_framerate = true;
-        }
-        else if (arg == "--bg-color")
-        {
-            const char *value = require_value(arg.c_str());
-            if (value == nullptr || !parse_bg_color_rgb(value, &options->margin_bgr))
-            {
-                std::cerr << "Error: --bg-color expects R,G,B values in 0-255" << std::endl;
-                return false;
-            }
-        }
         else if (arg == "-h" || arg == "--help")
         {
             print_usage(argv[0]);
@@ -871,9 +710,9 @@ std::pair<int, int> screen_size()
     return std::make_pair(1920, 1080);
 }
 
-cv::Mat letterbox_to_screen(const cv::Mat &img, int screen_w, int screen_h, const cv::Scalar &bg_bgr)
+cv::Mat letterbox_to_screen(const cv::Mat &img, int screen_w, int screen_h)
 {
-    cv::Mat canvas(screen_h, screen_w, CV_8UC3, bg_bgr);
+    cv::Mat canvas(screen_h, screen_w, CV_8UC3, cv::Scalar(0, 0, 0));
     if (img.empty())
     {
         return canvas;
@@ -976,45 +815,6 @@ void draw_model_name_overlay(cv::Mat &bgr, const std::string &model_path)
         cv::putText(bgr, text, cv::Point(tx, ty) + offset, font, scale, cv::Scalar(0, 0, 0), thick + 1, cv::LINE_AA);
     }
     cv::putText(bgr, text, cv::Point(tx, ty), font, scale, cv::Scalar(220, 224, 230), thick, cv::LINE_AA);
-}
-
-void draw_frame_id_overlay(cv::Mat &bgr, uint64_t frame_id, double latency_ms)
-{
-    std::ostringstream oss;
-    oss << "Frame ID: " << frame_id << "  Latency: " << std::fixed << std::setprecision(1) << latency_ms << " ms";
-    const std::string text = oss.str();
-    const int font = cv::FONT_HERSHEY_DUPLEX;
-    const double scale = 0.72;
-    const int thick = 2;
-    const int pad_x = 16;
-    const int pad_y = 11;
-    const int margin = 15;
-
-    int baseline = 0;
-    const cv::Size text_size = cv::getTextSize(text, font, scale, thick, &baseline);
-    const int box_w = text_size.width + pad_x * 2;
-    const int box_h = text_size.height + baseline + pad_y * 2;
-    const int x0 = std::min(margin, std::max(0, bgr.cols - box_w - margin));
-    const int y0 = std::max(margin, bgr.rows - box_h - margin);
-    const int x1 = std::min(x0 + box_w, bgr.cols);
-    const int y1 = std::min(y0 + box_h, bgr.rows);
-    if (x1 <= x0 + 4 || y1 <= y0 + 4)
-    {
-        return;
-    }
-
-    cv::Mat roi = bgr(cv::Rect(x0, y0, x1 - x0, y1 - y0));
-    cv::Mat panel(roi.size(), roi.type(), cv::Scalar(28, 30, 34));
-    cv::addWeighted(roi, 0.50, panel, 0.50, 0.0, roi);
-    cv::rectangle(bgr, cv::Rect(x0, y0, x1 - x0, y1 - y0), cv::Scalar(75, 82, 92), 1, cv::LINE_AA);
-
-    const int tx = x0 + pad_x;
-    const int ty = y0 + pad_y + text_size.height;
-    for (const cv::Point &offset : std::vector<cv::Point>{{-1, -1}, {-1, 1}, {1, -1}, {1, 1}})
-    {
-        cv::putText(bgr, text, cv::Point(tx, ty) + offset, font, scale, cv::Scalar(0, 0, 0), thick + 1, cv::LINE_AA);
-    }
-    cv::putText(bgr, text, cv::Point(tx, ty), font, scale, cv::Scalar(222, 227, 234), thick, cv::LINE_AA);
 }
 
 int64_t shape_dim(const std::vector<int64_t> &shape, std::size_t index, int64_t fallback)
@@ -1165,7 +965,6 @@ public:
             job->slot_index = slot;
             job->frame_id = next_submit_id_++;
             job->original_bgr = frame_bgr.clone();
-            job->submit_ts = std::chrono::steady_clock::now();
 
             void *input_ptr = slots_[static_cast<std::size_t>(slot)].input.data();
             JobContext *raw_job = job.release();
@@ -1271,7 +1070,6 @@ private:
         int slot_index = -1;
         uint64_t frame_id = 0;
         cv::Mat original_bgr;
-        std::chrono::steady_clock::time_point submit_ts;
     };
 
     int on_complete(dxrt::TensorPtrs &outputs, void *user_arg)
@@ -1287,9 +1085,6 @@ private:
         DepthResult result;
         result.frame_id = job->frame_id;
         result.original_bgr = job->original_bgr;
-        result.latency_ms = std::chrono::duration<double, std::milli>(
-                                std::chrono::steady_clock::now() - job->submit_ts)
-                                .count();
         if (!outputs.empty() && outputs.front())
         {
             ScopedTimer tensor_timer(g_timing.callback_tensor);
@@ -1514,7 +1309,7 @@ private:
     bool nchw_ = true;
 };
 
-cv::Mat create_depth_map(const cv::Mat &depth, bool grayscale)
+cv::Mat create_depth_map(const cv::Mat &depth)
 {
     if (depth.empty())
     {
@@ -1536,14 +1331,7 @@ cv::Mat create_depth_map(const cv::Mat &depth, bool grayscale)
     }
 
     cv::Mat bgr;
-    if (grayscale)
-    {
-        cv::cvtColor(normalized, bgr, cv::COLOR_GRAY2BGR);
-    }
-    else
-    {
-        cv::applyColorMap(normalized, bgr, cv::COLORMAP_TURBO);
-    }
+    cv::applyColorMap(normalized, bgr, cv::COLORMAP_TURBO);
     return bgr;
 }
 
@@ -1592,7 +1380,6 @@ int main(int argc, char **argv)
         print_startup_diagnostics(options);
 
         set_crash_phase(kPhaseOpenCamera);
-        configure_camera_controls(options.camera_index, options.disable_dynamic_framerate);
         cv::VideoCapture cap(options.camera_index, camera_backend_api(options.camera_backend));
         if (options.camera_buffer_size > 0)
         {
@@ -1879,7 +1666,7 @@ int main(int argc, char **argv)
                         cv::Mat frame_show;
                         {
                             ScopedTimer post_timer(g_timing.display_postprocess);
-                            cv::Mat depth_colored = create_depth_map(result.depth, options.grayscale);
+                            cv::Mat depth_colored = create_depth_map(result.depth);
                             cv::Mat display_content;
                             if (options.side_by_side)
                             {
@@ -1892,10 +1679,9 @@ int main(int argc, char **argv)
                                 display_content = depth_colored;
                             }
 
-                            frame_show = letterbox_to_screen(display_content, screen.first, screen.second, options.margin_bgr);
+                            frame_show = letterbox_to_screen(display_content, screen.first, screen.second);
                             draw_fps_overlay(frame_show, depth_fps_display);
                             draw_model_name_overlay(frame_show, options.model_path);
-                            draw_frame_id_overlay(frame_show, result.frame_id, result.latency_ms);
                         }
 
                         {
