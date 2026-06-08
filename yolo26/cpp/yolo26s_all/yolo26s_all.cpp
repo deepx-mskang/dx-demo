@@ -40,6 +40,7 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -96,6 +97,11 @@ struct AppArgs {
     int height = 720;
     int fps = 30;
     std::string decoder = "mppjpegdec";
+    bool debug_seg_timing = false;
+    int debug_timing_interval_ms = 1000;
+    bool debug_seg_bbox_only = false;
+    int seg_render_width = 640;
+    int seg_render_height = 360;
 };
 
 AppArgs parseArgs(int argc, char* argv[]) {
@@ -127,6 +133,19 @@ AppArgs parseArgs(int argc, char* argv[]) {
          cxxopts::value<int>(args.fps)->default_value(std::to_string(args.fps)))
         ("decoder", "Accepted for CLI compatibility; unused without OpenCV GStreamer.",
          cxxopts::value<std::string>(args.decoder)->default_value(args.decoder))
+        ("debug-seg-timing", "Print segmentation worker timing by stage.",
+         cxxopts::value<bool>(args.debug_seg_timing)->default_value("false"))
+        ("debug-timing-interval-ms", "Timing report interval in milliseconds.",
+         cxxopts::value<int>(args.debug_timing_interval_ms)->default_value(
+             std::to_string(args.debug_timing_interval_ms)))
+        ("debug-seg-bbox-only", "Render segmentation boxes only, without mask overlay.",
+         cxxopts::value<bool>(args.debug_seg_bbox_only)->default_value("false"))
+        ("seg-render-width", "Segmentation panel render width. Capped at 960.",
+         cxxopts::value<int>(args.seg_render_width)->default_value(
+             std::to_string(args.seg_render_width)))
+        ("seg-render-height", "Segmentation panel render height. Capped at 540.",
+         cxxopts::value<int>(args.seg_render_height)->default_value(
+             std::to_string(args.seg_render_height)))
         ("h,help", "Print usage");
 
     auto result = options.parse(argc, argv);
@@ -262,17 +281,232 @@ dxrt::TensorPtrs runInference(dxrt::InferenceEngine& ie,
     return ie.Run(preprocessed.data, nullptr, nullptr);
 }
 
+double msBetween(const std::chrono::steady_clock::time_point& begin,
+                 const std::chrono::steady_clock::time_point& end) {
+    return std::chrono::duration<double, std::milli>(end - begin).count();
+}
+
+class TimingReporter {
+public:
+    TimingReporter(std::string name, bool enabled, int interval_ms)
+        : name_(std::move(name)),
+          enabled_(enabled),
+          interval_(std::chrono::milliseconds(std::max(1, interval_ms))),
+          window_start_(std::chrono::steady_clock::now()) {}
+
+    void add(double preprocess_ms,
+             double inference_ms,
+             double postprocess_ms,
+             double render_ms,
+             double total_ms) {
+        if (!enabled_) {
+            return;
+        }
+
+        frames_ += 1;
+        preprocess_sum_ += preprocess_ms;
+        inference_sum_ += inference_ms;
+        postprocess_sum_ += postprocess_ms;
+        render_sum_ += render_ms;
+        total_sum_ += total_ms;
+
+        auto now = std::chrono::steady_clock::now();
+        if (now - window_start_ < interval_) {
+            return;
+        }
+
+        double wall_ms = msBetween(window_start_, now);
+        double fps = wall_ms > 0.0 ? static_cast<double>(frames_) * 1000.0 / wall_ms : 0.0;
+        double inv = frames_ > 0 ? 1.0 / static_cast<double>(frames_) : 0.0;
+
+        std::cout << "[TIMING][" << name_ << "] "
+                  << "frames=" << frames_
+                  << " fps=" << std::fixed << std::setprecision(1) << fps
+                  << " avg_ms total=" << std::setprecision(2) << total_sum_ * inv
+                  << " preprocess=" << preprocess_sum_ * inv
+                  << " inference=" << inference_sum_ * inv
+                  << " postprocess=" << postprocess_sum_ * inv
+                  << " render=" << render_sum_ * inv
+                  << " post+render=" << (postprocess_sum_ + render_sum_) * inv
+                  << std::endl;
+
+        frames_ = 0;
+        preprocess_sum_ = 0.0;
+        inference_sum_ = 0.0;
+        postprocess_sum_ = 0.0;
+        render_sum_ = 0.0;
+        total_sum_ = 0.0;
+        window_start_ = now;
+    }
+
+private:
+    std::string name_;
+    bool enabled_{false};
+    std::chrono::milliseconds interval_{1000};
+    std::chrono::steady_clock::time_point window_start_;
+    int frames_{0};
+    double preprocess_sum_{0.0};
+    double inference_sum_{0.0};
+    double postprocess_sum_{0.0};
+    double render_sum_{0.0};
+    double total_sum_{0.0};
+};
+
+struct SegRenderOptions {
+    int width{640};
+    int height{360};
+    int max_width{960};
+    int max_height{540};
+    bool bbox_only{false};
+};
+
+int clampInt(int value, int low, int high) {
+    return std::max(low, std::min(value, high));
+}
+
+cv::Rect rectFromScaledBox(const std::vector<float>& box,
+                           float sx,
+                           float sy,
+                           int width,
+                           int height) {
+    if (box.size() < 4 || width <= 0 || height <= 0) {
+        return {};
+    }
+
+    int x1 = clampInt(static_cast<int>(std::floor(box[0] * sx)), 0, width - 1);
+    int y1 = clampInt(static_cast<int>(std::floor(box[1] * sy)), 0, height - 1);
+    int x2 = clampInt(static_cast<int>(std::ceil(box[2] * sx)), 0, width);
+    int y2 = clampInt(static_cast<int>(std::ceil(box[3] * sy)), 0, height);
+    if (x2 <= x1 || y2 <= y1) {
+        return {};
+    }
+    return cv::Rect(x1, y1, x2 - x1, y2 - y1);
+}
+
+cv::Mat binaryMaskRoi(const cv::Mat& mask_roi, const cv::Size& target_size) {
+    if (mask_roi.empty() || target_size.width <= 0 || target_size.height <= 0) {
+        return {};
+    }
+
+    cv::Mat resized;
+    cv::resize(mask_roi, resized, target_size, 0, 0, cv::INTER_LINEAR);
+
+    cv::Mat binary;
+    if (resized.type() == CV_32FC1 || resized.type() == CV_64FC1) {
+        cv::threshold(resized, binary, 0.5, 255.0, cv::THRESH_BINARY);
+        binary.convertTo(binary, CV_8UC1);
+    } else {
+        resized.convertTo(binary, CV_8UC1);
+        cv::threshold(binary, binary, 127, 255, cv::THRESH_BINARY);
+    }
+    return binary;
+}
+
+void blendMaskIntoRoi(cv::Mat& output,
+                      const cv::Rect& render_roi,
+                      const cv::Mat& mask_binary,
+                      const cv::Vec3b& color,
+                      float alpha) {
+    if (render_roi.empty() || mask_binary.empty()) {
+        return;
+    }
+
+    cv::Mat target = output(render_roi);
+    cv::Mat color_mat(target.size(), CV_8UC3, cv::Scalar(color[0], color[1], color[2]));
+    cv::Mat blended;
+    cv::addWeighted(target, 1.0 - alpha, color_mat, alpha, 0, blended);
+    blended.copyTo(target, mask_binary);
+}
+
+void drawSegBoxAndLabel(cv::Mat& output,
+                        const dxapp::InstanceSegmentationResult& inst,
+                        const cv::Rect& box,
+                        const cv::Scalar& color) {
+    if (box.empty()) {
+        return;
+    }
+
+    cv::rectangle(output, box, color, 2);
+    std::string label = inst.class_name.empty()
+        ? ("class_" + std::to_string(inst.class_id))
+        : inst.class_name;
+    label += ": " + std::to_string(static_cast<int>(inst.confidence * 100)) + "%";
+
+    int baseline = 0;
+    cv::Size text_size = cv::getTextSize(label, cv::FONT_HERSHEY_SIMPLEX, 0.5, 1, &baseline);
+    int text_x = box.x;
+    int text_y = box.y - 5 > text_size.height ? box.y - 5 : box.y + text_size.height + 5;
+    text_y = clampInt(text_y, text_size.height + 1, output.rows - 1);
+
+    cv::Rect bg(text_x,
+                std::max(0, text_y - text_size.height - 4),
+                std::min(text_size.width + 4, output.cols - text_x),
+                std::min(text_size.height + baseline + 6, output.rows));
+    if (bg.width > 0 && bg.height > 0) {
+        cv::rectangle(output, bg, color, cv::FILLED);
+    }
+    cv::putText(output, label, cv::Point(text_x + 2, text_y),
+                cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 0, 0), 1, cv::LINE_AA);
+}
+
+cv::Mat renderSegmentationFast(const cv::Mat& frame,
+                               const std::vector<dxapp::InstanceSegmentationResult>& results,
+                               const dxapp::PreprocessContext& ctx,
+                               const SegRenderOptions& options) {
+    int target_w = clampInt(options.width, 1, options.max_width);
+    int target_h = clampInt(options.height, 1, options.max_height);
+
+    cv::Mat output;
+    cv::resize(frame, output, cv::Size(target_w, target_h), 0, 0, cv::INTER_LINEAR);
+
+    const int original_w = ctx.original_width > 0 ? ctx.original_width : frame.cols;
+    const int original_h = ctx.original_height > 0 ? ctx.original_height : frame.rows;
+    const float sx = static_cast<float>(output.cols) / static_cast<float>(original_w);
+    const float sy = static_cast<float>(output.rows) / static_cast<float>(original_h);
+
+    for (size_t i = 0; i < results.size(); ++i) {
+        const auto& inst = results[i];
+        cv::Vec3b color_vec = dxapp::SEGMENTATION_COLORS[i % dxapp::SEGMENTATION_COLORS.size()];
+        cv::Scalar color(color_vec[0], color_vec[1], color_vec[2]);
+
+        cv::Rect render_roi = rectFromScaledBox(inst.box, sx, sy, output.cols, output.rows);
+        if (render_roi.empty()) {
+            continue;
+        }
+
+        if (!options.bbox_only && !inst.mask.empty()) {
+            const float mx = static_cast<float>(inst.mask.cols) / static_cast<float>(original_w);
+            const float my = static_cast<float>(inst.mask.rows) / static_cast<float>(original_h);
+            cv::Rect mask_roi = rectFromScaledBox(inst.box, mx, my, inst.mask.cols, inst.mask.rows);
+            if (!mask_roi.empty()) {
+                cv::Mat mask_binary = binaryMaskRoi(inst.mask(mask_roi), render_roi.size());
+                blendMaskIntoRoi(output, render_roi, mask_binary, color_vec, 0.4f);
+            }
+        }
+
+        drawSegBoxAndLabel(output, inst, render_roi, color);
+    }
+
+    return output;
+}
+
 template <typename ResultT, typename FactoryT>
 class ResultWorker final : public IFrameConsumer {
 public:
     ResultWorker(int panel_index,
                  std::string name,
                  std::string model_path,
-                 QuadWindow* window)
+                 QuadWindow* window,
+                 bool timing_enabled = false,
+                 int timing_interval_ms = 1000,
+                 SegRenderOptions seg_render_options = {})
         : panel_index_(panel_index),
           name_(std::move(name)),
           model_path_(std::move(model_path)),
-          window_(window) {}
+          window_(window),
+          timing_enabled_(timing_enabled),
+          timing_interval_ms_(timing_interval_ms),
+          seg_render_options_(seg_render_options) {}
 
     void start() override {
         running_.store(true, std::memory_order_relaxed);
@@ -303,6 +537,9 @@ private:
     std::string name_;
     std::string model_path_;
     QuadWindow* window_;
+    bool timing_enabled_{false};
+    int timing_interval_ms_{1000};
+    SegRenderOptions seg_render_options_;
     LatestFrameQueue queue_;
     std::atomic<bool> running_{false};
     std::thread thread_;
@@ -494,8 +731,18 @@ public:
             kOdPanel, "Object Detection", args_.model, this));
         workers_.push_back(std::make_unique<ResultWorker<dxapp::PoseResult, dxapp::Yolo26s_poseFactory>>(
             kPosePanel, "Pose Estimation", args_.model_pose, this));
+        SegRenderOptions seg_render_options;
+        seg_render_options.width = args_.seg_render_width;
+        seg_render_options.height = args_.seg_render_height;
+        seg_render_options.bbox_only = args_.debug_seg_bbox_only;
         workers_.push_back(std::make_unique<ResultWorker<dxapp::InstanceSegmentationResult, dxapp::Yolo26s_segFactory>>(
-            kSegPanel, "Instance Segmentation", args_.model_seg, this));
+            kSegPanel,
+            "Instance Segmentation",
+            args_.model_seg,
+            this,
+            args_.debug_seg_timing,
+            args_.debug_timing_interval_ms,
+            seg_render_options));
         workers_.push_back(std::make_unique<ClassificationWorker>(args_.model_cls, this));
 
         std::vector<IFrameConsumer*> consumers;
@@ -649,6 +896,8 @@ void ResultWorker<ResultT, FactoryT>::run() {
         std::cout << "[INFO] " << name_ << " input size (WxH): "
                   << input_width << "x" << input_height << std::endl;
 
+        TimingReporter timing(name_, timing_enabled_, timing_interval_ms_);
+
         while (running_.load(std::memory_order_relaxed)) {
             cv::Mat frame;
             if (!queue_.waitPop(frame, running_)) {
@@ -660,10 +909,25 @@ void ResultWorker<ResultT, FactoryT>::run() {
 
             dxapp::PreprocessContext ctx;
             cv::Mat preprocessed;
+            auto t0 = std::chrono::steady_clock::now();
             preprocessor->process(frame, preprocessed, ctx);
+            auto t1 = std::chrono::steady_clock::now();
             auto outputs = runInference(ie, preprocessed, is_float_input, is_nhwc);
+            auto t2 = std::chrono::steady_clock::now();
             auto results = postprocessor->process(outputs, ctx);
-            cv::Mat rendered = visualizer->draw(frame, results, ctx);
+            auto t3 = std::chrono::steady_clock::now();
+            cv::Mat rendered;
+            if constexpr (std::is_same_v<ResultT, dxapp::InstanceSegmentationResult>) {
+                rendered = renderSegmentationFast(frame, results, ctx, seg_render_options_);
+            } else {
+                rendered = visualizer->draw(frame, results, ctx);
+            }
+            auto t4 = std::chrono::steady_clock::now();
+            timing.add(msBetween(t0, t1),
+                       msBetween(t1, t2),
+                       msBetween(t2, t3),
+                       msBetween(t3, t4),
+                       msBetween(t0, t4));
             window_->postFrame(panel_index_, rendered);
         }
     } catch (const std::exception& e) {
