@@ -1,5 +1,9 @@
 # robotics_demo
 
+```
+sudo apt install -y libssl-dev openssl pkg-config
+```
+
 `robotics_demo`는 얼굴 검출, 얼굴 정렬, 얼굴 식별 모델을 함께 사용하는 얼굴 인식 데모입니다.
 
 ## 개요

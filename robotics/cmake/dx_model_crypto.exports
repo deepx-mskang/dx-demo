@@ -1,0 +1,8 @@
+{
+    global:
+        dxm_0;
+        dxm_1;
+        dxm_2;
+    local:
+        *;
+};

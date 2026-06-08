@@ -9,6 +9,7 @@
 #include <dxrt/dxrt_api.h>
 
 #include "face_recognition.h"
+#include "encrypted_model_engine.h"
 #include "inference_fps.h"
 #include "mobed_detector.h"
 #include "pose_seg.h"
@@ -429,27 +430,27 @@ int main(int argc, char *argv[])
         return -1;
     }
 
-    dxrt::InferenceEngine ie_mps0(options.mps0ModelPath);
-    dxrt::InferenceEngine ie_mps1(options.mps1ModelPath);
-    dxrt::InferenceEngine ie_fd(options.fdModelPath);
-    dxrt::InferenceEngine ie_lm(options.lmModelPath);
-    dxrt::InferenceEngine ie_fr(options.frModelPath);
-    dxrt::InferenceEngine ie_mobed(options.detModelPath);
-    MobedVideoSession mobed_session(&ie_mobed);
+    EncryptedModelEngine ie_mps0(options.mps0ModelPath);
+    EncryptedModelEngine ie_mps1(options.mps1ModelPath);
+    EncryptedModelEngine ie_fd(options.fdModelPath);
+    EncryptedModelEngine ie_lm(options.lmModelPath);
+    EncryptedModelEngine ie_fr(options.frModelPath);
+    EncryptedModelEngine ie_mobed(options.detModelPath);
+    MobedVideoSession mobed_session(ie_mobed.get());
     if (!mobed_session.ok())
     {
         std::cout << "Error: MobED detector failed to initialize." << std::endl;
         return -1;
     }
-    PoseSegVideoSession pose_session(&ie_mps0, &ie_mps1);
+    PoseSegVideoSession pose_session(ie_mps0.get(), ie_mps1.get());
 
-    std::shared_ptr<dxrt::InferenceEngine> ie_gender;
+    std::shared_ptr<EncryptedModelEngine> ie_gender;
     if (options.classifierGender)
     {
-        ie_gender = std::make_shared<dxrt::InferenceEngine>(options.genderModelPath);
+        ie_gender = std::make_shared<EncryptedModelEngine>(options.genderModelPath);
     }
 
-    dxrt::InferenceEngine *gender_engine = ie_gender.get();
+    dxrt::InferenceEngine *gender_engine = ie_gender ? ie_gender->get() : nullptr;
     SsdParam fd_config = make_fd_config();
 
     if (!options.videoFile.empty() || options.cameraInput)
@@ -485,7 +486,7 @@ int main(int argc, char *argv[])
         SlidingWindowInferenceFps pose_inference_fps;
         SlidingWindowInferenceFps mobed_inference_fps;
 
-        FaceRecognitionVideoSession face_session(&ie_fd, &ie_lm, &ie_fr, gender_engine, fd_config,
+        FaceRecognitionVideoSession face_session(ie_fd.get(), ie_lm.get(), ie_fr.get(), gender_engine, fd_config,
                                                  options.dbPath, options.frThreshold);
         face_session.SetOnInferenceDone([&face_inference_fps]() { face_inference_fps.RecordInferenceComplete(); });
         pose_session.SetOnInferenceDone([&pose_inference_fps]() { pose_inference_fps.RecordInferenceComplete(); });

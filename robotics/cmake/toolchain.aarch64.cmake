@@ -15,5 +15,6 @@ SET(CMAKE_NM              /usr/bin/aarch64-linux-gnu-nm )
 SET(CMAKE_OBJCOPY         /usr/bin/aarch64-linux-gnu-objcopy )
 SET(CMAKE_OBJDUMP         /usr/bin/aarch64-linux-gnu-objdump )
 SET(CMAKE_RANLIB          /usr/bin/aarch64-linux-gnu-ranlib )
+SET(CMAKE_STRIP           /usr/bin/aarch64-linux-gnu-strip )
 
 set(OpenCV_DIR            ${CMAKE_SOURCE_DIR}/extern/${CMAKE_SYSTEM_PROCESSOR})

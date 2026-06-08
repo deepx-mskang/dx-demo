@@ -2,7 +2,7 @@
 
 ./kill_robotics.sh
 
-cd ~/dx-demos/robotics
+cd ~/git/dx-demos/robotics
 
 MODELS="assets/models"
 
