@@ -1,7 +1,6 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
-#include <csignal>
 #include <condition_variable>
 #include <cmath>
 #include <cstdint>
@@ -9,7 +8,6 @@
 #include <cstdlib>
 #include <deque>
 #include <fstream>
-#include <iomanip>
 #include <iostream>
 #include <map>
 #include <memory>
@@ -21,21 +19,13 @@
 #include <vector>
 
 #include <cerrno>
-#include <execinfo.h>
-#include <limits.h>
 #include <sys/stat.h>
-#include <sys/types.h>
-#include <unistd.h>
 
 #include <dxrt/dxrt_api.h>
 #include <opencv2/opencv.hpp>
 
 #ifdef USE_X11
 #include <X11/Xlib.h>
-#endif
-
-#ifndef DEPTH_ROOT_DIR
-#define DEPTH_ROOT_DIR "."
 #endif
 
 namespace
@@ -46,156 +36,9 @@ constexpr int kDefaultCameraWidth = 640;
 constexpr int kDefaultCameraHeight = 480;
 constexpr int kDefaultCameraFps = 30;
 constexpr int kMaxAsyncQueueSize = 4;
-constexpr double kFpsWindowSec = 5.0;
+constexpr double kFpsWindowSec = 3.0;
 constexpr double kFpsUpdateIntervalSec = 1.0;
 const char *kWindowName = "Depth Anything v2 Demo";
-
-enum CrashPhase
-{
-    kPhaseStartup = 0,
-    kPhaseParseArgs,
-    kPhaseCheckModel,
-    kPhaseOpenCamera,
-    kPhaseCreateEngine,
-    kPhaseReadModelInputs,
-    kPhaseRegisterCallback,
-    kPhaseCaptureThread,
-    kPhaseInferenceThread,
-    kPhaseRunAsync,
-    kPhaseInferenceCallback,
-    kPhaseDisplayLoop,
-    kPhaseShutdown
-};
-
-thread_local volatile std::sig_atomic_t g_crash_phase = kPhaseStartup;
-
-const char *crash_phase_name(std::sig_atomic_t phase)
-{
-    switch (phase)
-    {
-    case kPhaseStartup:
-        return "startup";
-    case kPhaseParseArgs:
-        return "argument parsing";
-    case kPhaseCheckModel:
-        return "model validation";
-    case kPhaseOpenCamera:
-        return "camera initialization";
-    case kPhaseCreateEngine:
-        return "DXRT InferenceEngine creation";
-    case kPhaseReadModelInputs:
-        return "DXRT model input inspection";
-    case kPhaseRegisterCallback:
-        return "DXRT callback registration";
-    case kPhaseCaptureThread:
-        return "camera capture thread";
-    case kPhaseInferenceThread:
-        return "inference thread";
-    case kPhaseRunAsync:
-        return "DXRT RunAsync";
-    case kPhaseInferenceCallback:
-        return "DXRT inference callback";
-    case kPhaseDisplayLoop:
-        return "display loop";
-    case kPhaseShutdown:
-        return "shutdown";
-    default:
-        return "unknown";
-    }
-}
-
-void set_crash_phase(CrashPhase phase)
-{
-    g_crash_phase = phase;
-}
-
-class CrashPhaseScope
-{
-public:
-    explicit CrashPhaseScope(CrashPhase phase)
-        : previous_(g_crash_phase)
-    {
-        set_crash_phase(phase);
-    }
-
-    ~CrashPhaseScope()
-    {
-        g_crash_phase = previous_;
-    }
-
-private:
-    std::sig_atomic_t previous_;
-};
-
-void write_signal_text(const char *text)
-{
-    if (text == nullptr)
-    {
-        return;
-    }
-
-    std::size_t len = 0;
-    while (text[len] != '\0')
-    {
-        ++len;
-    }
-    const ssize_t written = ::write(STDERR_FILENO, text, len);
-    (void)written;
-}
-
-const char *signal_name(int signal)
-{
-    switch (signal)
-    {
-    case SIGSEGV:
-        return "SIGSEGV";
-    case SIGABRT:
-        return "SIGABRT";
-    case SIGBUS:
-        return "SIGBUS";
-    case SIGILL:
-        return "SIGILL";
-    case SIGFPE:
-        return "SIGFPE";
-    default:
-        return "signal";
-    }
-}
-
-void crash_signal_handler(int signal)
-{
-    write_signal_text("\nFatal native crash: ");
-    write_signal_text(signal_name(signal));
-    write_signal_text("\nCurrent phase: ");
-    write_signal_text(crash_phase_name(g_crash_phase));
-    write_signal_text("\nBacktrace:\n");
-
-    void *frames[64];
-    const int frame_count = ::backtrace(frames, 64);
-    if (frame_count > 0)
-    {
-        ::backtrace_symbols_fd(frames, frame_count, STDERR_FILENO);
-    }
-
-    ::_exit(128 + signal);
-}
-
-void install_crash_handlers()
-{
-    struct sigaction action {};
-    action.sa_handler = crash_signal_handler;
-    sigemptyset(&action.sa_mask);
-    action.sa_flags = SA_RESETHAND | SA_NODEFER;
-
-    sigaction(SIGSEGV, &action, nullptr);
-    sigaction(SIGABRT, &action, nullptr);
-    sigaction(SIGBUS, &action, nullptr);
-    sigaction(SIGILL, &action, nullptr);
-    sigaction(SIGFPE, &action, nullptr);
-
-    void *frames[1];
-    (void)::backtrace(frames, 1);
-}
 
 bool file_exists(const std::string &path)
 {
@@ -203,59 +46,9 @@ bool file_exists(const std::string &path)
     return static_cast<bool>(in);
 }
 
-long long file_size_bytes(const std::string &path)
-{
-    struct stat st {};
-    if (::stat(path.c_str(), &st) != 0)
-    {
-        return -1;
-    }
-    return static_cast<long long>(st.st_size);
-}
-
-std::string current_working_directory()
-{
-    char cwd[PATH_MAX];
-    if (::getcwd(cwd, sizeof(cwd)) == nullptr)
-    {
-        return "<unknown>";
-    }
-    return cwd;
-}
-
-std::string resolved_path(const std::string &path)
-{
-    char resolved[PATH_MAX];
-    if (::realpath(path.c_str(), resolved) == nullptr)
-    {
-        return std::string();
-    }
-    return resolved;
-}
-
-std::string default_model_path()
-{
-    const std::string root = DEPTH_ROOT_DIR;
-    const std::vector<std::string> candidates = {
-        root + "/models/depth_anything_v2.dxnn",
-        root + "/depth_anything_v2_vits_294x518.dxnn",
-        root + "/depth_anything_v2_vits_294x518_sim_aggsv.dxnn",
-        root + "/depth_anything_v2_vits_224x224.dxnn",
-        root + "/depth_anything_v2_vitb.dxnn",
-    };
-    for (const std::string &candidate : candidates)
-    {
-        if (file_exists(candidate))
-        {
-            return candidate;
-        }
-    }
-    return candidates.front();
-}
-
 struct Options
 {
-    std::string model_path = default_model_path();
+    std::string model_path;
     int camera_index = kDefaultCameraIndex;
     int width = kDefaultCameraWidth;
     int height = kDefaultCameraHeight;
@@ -265,26 +58,7 @@ struct Options
     std::string camera_backend = "any";
     std::string camera_fourcc;
     bool side_by_side = false;
-    bool camera_only = false;
 };
-
-void print_startup_diagnostics(const Options &options)
-{
-    std::cout << "Working directory: " << current_working_directory() << std::endl;
-    std::cout << "Model path: " << options.model_path << std::endl;
-
-    const std::string absolute_model_path = resolved_path(options.model_path);
-    if (!absolute_model_path.empty())
-    {
-        std::cout << "Resolved model path: " << absolute_model_path << std::endl;
-    }
-
-    const long long model_size = file_size_bytes(options.model_path);
-    if (model_size >= 0)
-    {
-        std::cout << "Model file size: " << model_size << " bytes" << std::endl;
-    }
-}
 
 struct CameraPacket
 {
@@ -302,137 +76,6 @@ struct DepthResult
 std::mutex g_camera_mutex;
 std::condition_variable g_camera_cv;
 CameraPacket g_latest_camera;
-std::deque<std::chrono::steady_clock::time_point> g_camera_timestamps;
-
-std::atomic<uint64_t> g_camera_frames(0);
-std::atomic<uint64_t> g_submitted_frames(0);
-std::atomic<uint64_t> g_skipped_frames(0);
-std::atomic<uint64_t> g_completed_frames(0);
-std::atomic<uint64_t> g_displayed_frames(0);
-
-struct TimingCounter
-{
-    std::atomic<uint64_t> count{0};
-    std::atomic<uint64_t> total_us{0};
-};
-
-struct TimingSnapshot
-{
-    uint64_t count = 0;
-    uint64_t total_us = 0;
-};
-
-struct PipelineTimingStats
-{
-    TimingCounter camera_read;
-    TimingCounter camera_grab;
-    TimingCounter camera_retrieve;
-    TimingCounter camera_interval;
-    TimingCounter camera_loop_gap;
-    TimingCounter camera_store;
-    TimingCounter camera_lock_wait;
-    TimingCounter inference_wait;
-    TimingCounter inference_copy;
-    TimingCounter submit_total;
-    TimingCounter preprocess;
-    TimingCounter run_async;
-    TimingCounter callback_total;
-    TimingCounter callback_tensor;
-    TimingCounter display_total;
-    TimingCounter display_postprocess;
-    TimingCounter display_show;
-    TimingCounter wait_key;
-};
-
-struct PipelineTimingSnapshot
-{
-    TimingSnapshot camera_read;
-    TimingSnapshot camera_grab;
-    TimingSnapshot camera_retrieve;
-    TimingSnapshot camera_interval;
-    TimingSnapshot camera_loop_gap;
-    TimingSnapshot camera_store;
-    TimingSnapshot camera_lock_wait;
-    TimingSnapshot inference_wait;
-    TimingSnapshot inference_copy;
-    TimingSnapshot submit_total;
-    TimingSnapshot preprocess;
-    TimingSnapshot run_async;
-    TimingSnapshot callback_total;
-    TimingSnapshot callback_tensor;
-    TimingSnapshot display_total;
-    TimingSnapshot display_postprocess;
-    TimingSnapshot display_show;
-    TimingSnapshot wait_key;
-};
-
-PipelineTimingStats g_timing;
-
-void record_timing(TimingCounter &counter,
-                   const std::chrono::steady_clock::time_point &start,
-                   const std::chrono::steady_clock::time_point &end = std::chrono::steady_clock::now())
-{
-    const auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
-    if (elapsed < 0)
-    {
-        return;
-    }
-
-    counter.count.fetch_add(1, std::memory_order_relaxed);
-    counter.total_us.fetch_add(static_cast<uint64_t>(elapsed), std::memory_order_relaxed);
-}
-
-void record_timing_us(TimingCounter &counter, uint64_t elapsed_us)
-{
-    counter.count.fetch_add(1, std::memory_order_relaxed);
-    counter.total_us.fetch_add(elapsed_us, std::memory_order_relaxed);
-}
-
-double average_ms_since_last(const TimingCounter &counter, TimingSnapshot *snapshot)
-{
-    const uint64_t count = counter.count.load(std::memory_order_relaxed);
-    const uint64_t total_us = counter.total_us.load(std::memory_order_relaxed);
-    const uint64_t delta_count = count - snapshot->count;
-    const uint64_t delta_total_us = total_us - snapshot->total_us;
-
-    snapshot->count = count;
-    snapshot->total_us = total_us;
-
-    if (delta_count == 0)
-    {
-        return 0.0;
-    }
-    return static_cast<double>(delta_total_us) / static_cast<double>(delta_count) / 1000.0;
-}
-
-double rate_since_last(uint64_t current, uint64_t *last, double elapsed_sec)
-{
-    const uint64_t delta = current - *last;
-    *last = current;
-    if (elapsed_sec <= 0.0)
-    {
-        return 0.0;
-    }
-    return static_cast<double>(delta) / elapsed_sec;
-}
-
-class ScopedTimer
-{
-public:
-    explicit ScopedTimer(TimingCounter &counter)
-        : counter_(counter), start_(std::chrono::steady_clock::now())
-    {
-    }
-
-    ~ScopedTimer()
-    {
-        record_timing(counter_, start_);
-    }
-
-private:
-    TimingCounter &counter_;
-    std::chrono::steady_clock::time_point start_;
-};
 
 std::string basename_of(const std::string &path)
 {
@@ -510,19 +153,19 @@ bool parse_int_value(const std::string &value, int *out)
 void print_usage(const char *argv0)
 {
     std::cout
-        << "Usage: " << argv0 << " [OPTIONS]\n"
-        << "  -m, --model <PATH>          Path to .dxnn model\n"
+        << "Usage: " << argv0 << " --model <PATH> [OPTIONS]\n"
+        << "  -m, --model <PATH>          Path to .dxnn model (required)\n"
         << "  -s, --side                  Show original and depth map side by side\n"
         << "      --camera-index <N>      Camera index (default: 0)\n"
         << "      --width <N>             Camera width (default: 640)\n"
         << "      --height <N>            Camera height (default: 480)\n"
         << "      --fps <N>               Camera FPS request (default: 30)\n"
-        << "      --queue-size <N>        Async in-flight queue size, 1..4 (default: 4)\n"
+        << "      --queue-size <N>        Async in-flight queue size, 1.." << kMaxAsyncQueueSize
+        << " (default: " << kMaxAsyncQueueSize << ")\n"
         << "      --backend any|v4l2      OpenCV camera backend (default: any)\n"
         << "      --camera-buffer-size <N>\n"
         << "                              Set OpenCV camera buffer size when N > 0\n"
         << "      --camera-fourcc CODE    Request camera pixel format, e.g. MJPG or YUYV\n"
-        << "      --camera-only           Benchmark camera capture without NPU/display\n"
         << "  -h, --help                  Show this help\n";
 }
 
@@ -595,7 +238,7 @@ bool parse_args(int argc, char **argv, Options *options)
             if (value == nullptr || !parse_int_value(value, &options->queue_size) ||
                 options->queue_size < 1 || options->queue_size > kMaxAsyncQueueSize)
             {
-                std::cerr << "Error: --queue-size expects an integer from 1 to 4" << std::endl;
+                std::cerr << "Error: --queue-size expects an integer from 1 to " << kMaxAsyncQueueSize << std::endl;
                 return false;
             }
         }
@@ -637,10 +280,6 @@ bool parse_args(int argc, char **argv, Options *options)
                 return false;
             }
         }
-        else if (arg == "--camera-only")
-        {
-            options->camera_only = true;
-        }
         else if (arg == "-h" || arg == "--help")
         {
             print_usage(argv[0]);
@@ -652,6 +291,12 @@ bool parse_args(int argc, char **argv, Options *options)
             return false;
         }
     }
+    if (options->model_path.empty())
+    {
+        std::cerr << "Error: --model is required" << std::endl;
+        return false;
+    }
+
     return true;
 }
 
@@ -671,24 +316,6 @@ int camera_backend_api(const std::string &backend)
         return cv::CAP_V4L2;
     }
     return cv::CAP_ANY;
-}
-
-std::string fourcc_to_string(double value)
-{
-    const int fourcc = static_cast<int>(value);
-    std::string code(4, ' ');
-    code[0] = static_cast<char>(fourcc & 0xff);
-    code[1] = static_cast<char>((fourcc >> 8) & 0xff);
-    code[2] = static_cast<char>((fourcc >> 16) & 0xff);
-    code[3] = static_cast<char>((fourcc >> 24) & 0xff);
-    for (char &ch : code)
-    {
-        if (ch < 32 || ch > 126)
-        {
-            ch = '?';
-        }
-    }
-    return code;
 }
 
 std::pair<int, int> screen_size()
@@ -847,45 +474,37 @@ public:
     {
         std::cout << "Initializing DX Engine (Async Mode) with Depth Anything..." << std::endl;
 
+        try
         {
-            CrashPhaseScope phase(kPhaseCreateEngine);
-            std::cout << "Creating DXRT InferenceEngine..." << std::endl;
-            try
-            {
-                dxrt::InferenceOption option;
-                engine_.reset(new dxrt::InferenceEngine(model_path, option));
-            }
-            catch (const std::exception &e)
-            {
-                throw std::runtime_error(std::string("failed to create DXRT InferenceEngine: ") + e.what());
-            }
-            catch (...)
-            {
-                throw std::runtime_error("failed to create DXRT InferenceEngine: unknown exception");
-            }
+            dxrt::InferenceOption option;
+            engine_.reset(new dxrt::InferenceEngine(model_path, option));
+        }
+        catch (const std::exception &e)
+        {
+            throw std::runtime_error(std::string("failed to create DXRT InferenceEngine: ") + e.what());
+        }
+        catch (...)
+        {
+            throw std::runtime_error("failed to create DXRT InferenceEngine: unknown exception");
+        }
 
-            if (!engine_)
-            {
-                throw std::runtime_error("failed to create DXRT InferenceEngine: engine is null");
-            }
-            std::cout << "DXRT InferenceEngine created." << std::endl;
+        if (!engine_)
+        {
+            throw std::runtime_error("failed to create DXRT InferenceEngine: engine is null");
         }
 
         dxrt::Tensors inputs;
+        try
         {
-            CrashPhaseScope phase(kPhaseReadModelInputs);
-            try
-            {
-                inputs = engine_->GetInputs();
-            }
-            catch (const std::exception &e)
-            {
-                throw std::runtime_error(std::string("failed to inspect model input tensors: ") + e.what());
-            }
-            catch (...)
-            {
-                throw std::runtime_error("failed to inspect model input tensors: unknown exception");
-            }
+            inputs = engine_->GetInputs();
+        }
+        catch (const std::exception &e)
+        {
+            throw std::runtime_error(std::string("failed to inspect model input tensors: ") + e.what());
+        }
+        catch (...)
+        {
+            throw std::runtime_error("failed to inspect model input tensors: unknown exception");
         }
         if (inputs.empty())
         {
@@ -916,12 +535,9 @@ public:
             }
         }
 
-        {
-            CrashPhaseScope phase(kPhaseRegisterCallback);
-            engine_->RegisterCallback([this](dxrt::TensorPtrs &outputs, void *user_arg) -> int {
-                return on_complete(outputs, user_arg);
-            });
-        }
+        engine_->RegisterCallback([this](dxrt::TensorPtrs &outputs, void *user_arg) -> int {
+            return on_complete(outputs, user_arg);
+        });
 
         std::cout << "Model Input Size: " << net_w_ << "x" << net_h_ << std::endl;
         std::cout << "Async queue size: " << queue_size_ << " (max " << kMaxAsyncQueueSize << ")" << std::endl;
@@ -953,12 +569,7 @@ public:
 
         try
         {
-            ScopedTimer submit_timer(g_timing.submit_total);
-
-            {
-                ScopedTimer preprocess_timer(g_timing.preprocess);
-                preprocess(frame_bgr, slots_[static_cast<std::size_t>(slot)].input);
-            }
+            preprocess(frame_bgr, slots_[static_cast<std::size_t>(slot)].input);
 
             std::unique_ptr<JobContext> job(new JobContext);
             job->owner = this;
@@ -971,8 +582,6 @@ public:
             int job_id = -1;
             try
             {
-                CrashPhaseScope phase(kPhaseRunAsync);
-                ScopedTimer run_async_timer(g_timing.run_async);
                 job_id = engine_->RunAsync(input_ptr, static_cast<void *>(raw_job));
             }
             catch (...)
@@ -985,7 +594,6 @@ public:
                 std::lock_guard<std::mutex> lock(submit_mutex_);
                 last_job_id_ = job_id;
             }
-            g_submitted_frames.fetch_add(1, std::memory_order_relaxed);
             return true;
         }
         catch (...)
@@ -1012,7 +620,6 @@ public:
         *result = std::move(it->second);
         pending_results_.erase(it);
         ++next_display_id_;
-        g_displayed_frames.fetch_add(1, std::memory_order_relaxed);
         return true;
     }
 
@@ -1027,18 +634,6 @@ public:
             completion_timestamps_.pop_front();
         }
         return static_cast<double>(completion_timestamps_.size()) / kFpsWindowSec;
-    }
-
-    int in_flight() const
-    {
-        std::lock_guard<std::mutex> lock(slots_mutex_);
-        return in_flight_;
-    }
-
-    uint64_t next_display_id() const
-    {
-        std::lock_guard<std::mutex> lock(results_mutex_);
-        return next_display_id_;
     }
 
     void wait_all()
@@ -1074,8 +669,6 @@ private:
 
     int on_complete(dxrt::TensorPtrs &outputs, void *user_arg)
     {
-        CrashPhaseScope phase(kPhaseInferenceCallback);
-        ScopedTimer callback_timer(g_timing.callback_total);
         std::unique_ptr<JobContext> job(static_cast<JobContext *>(user_arg));
         if (!job)
         {
@@ -1087,7 +680,6 @@ private:
         result.original_bgr = job->original_bgr;
         if (!outputs.empty() && outputs.front())
         {
-            ScopedTimer tensor_timer(g_timing.callback_tensor);
             result.depth = tensor_to_depth_mat(outputs.front().get());
         }
 
@@ -1095,8 +687,6 @@ private:
             std::lock_guard<std::mutex> lock(stats_mutex_);
             completion_timestamps_.push_back(std::chrono::steady_clock::now());
         }
-        g_completed_frames.fetch_add(1, std::memory_order_relaxed);
-
         push_result(std::move(result));
         release_slot(job->slot_index);
         return 0;
@@ -1335,19 +925,6 @@ cv::Mat create_depth_map(const cv::Mat &depth)
     return bgr;
 }
 
-double camera_fps()
-{
-    const auto now = std::chrono::steady_clock::now();
-    const auto cutoff = now - std::chrono::duration_cast<std::chrono::steady_clock::duration>(
-                                  std::chrono::duration<double>(kFpsWindowSec));
-    std::lock_guard<std::mutex> lock(g_camera_mutex);
-    while (!g_camera_timestamps.empty() && g_camera_timestamps.front() < cutoff)
-    {
-        g_camera_timestamps.pop_front();
-    }
-    return static_cast<double>(g_camera_timestamps.size()) / kFpsWindowSec;
-}
-
 void set_fps_window_title(double fps)
 {
     char title[128];
@@ -1359,9 +936,6 @@ void set_fps_window_title(double fps)
 
 int main(int argc, char **argv)
 {
-    install_crash_handlers();
-    set_crash_phase(kPhaseParseArgs);
-
     Options options;
     if (!parse_args(argc, argv, &options))
     {
@@ -1371,15 +945,12 @@ int main(int argc, char **argv)
 
     try
     {
-        set_crash_phase(kPhaseCheckModel);
         if (!file_exists(options.model_path))
         {
             std::cerr << "Error: model file not found: " << options.model_path << std::endl;
             return 1;
         }
-        print_startup_diagnostics(options);
 
-        set_crash_phase(kPhaseOpenCamera);
         cv::VideoCapture cap(options.camera_index, camera_backend_api(options.camera_backend));
         if (options.camera_buffer_size > 0)
         {
@@ -1399,129 +970,13 @@ int main(int argc, char **argv)
             return 1;
         }
 
-        if (options.camera_only)
-        {
-            std::cout << "Start Camera Capture Benchmark. Press Ctrl+C to exit." << std::endl;
-            std::cout << "Camera request: /dev/video" << options.camera_index
-                      << " " << options.width << "x" << options.height
-                      << " @ " << options.fps << " FPS"
-                      << ", backend=" << options.camera_backend << std::endl;
-            std::cout << "Actual camera: "
-                      << static_cast<int>(cap.get(cv::CAP_PROP_FRAME_WIDTH)) << "x"
-                      << static_cast<int>(cap.get(cv::CAP_PROP_FRAME_HEIGHT))
-                      << " @ " << cap.get(cv::CAP_PROP_FPS) << " FPS"
-                      << ", FOURCC=" << fourcc_to_string(cap.get(cv::CAP_PROP_FOURCC))
-                      << ", backend_id=" << cap.get(cv::CAP_PROP_BACKEND)
-                      << std::endl;
-
-            PipelineTimingSnapshot timing_snapshot;
-            uint64_t last_camera_frames = 0;
-            auto last_stats_print = std::chrono::steady_clock::now();
-            std::chrono::steady_clock::time_point last_frame_ts;
-            std::chrono::steady_clock::time_point last_loop_end;
-
-            while (true)
-            {
-                cv::Mat frame;
-                const auto read_start = std::chrono::steady_clock::now();
-                if (last_loop_end.time_since_epoch().count() != 0)
-                {
-                    record_timing(g_timing.camera_loop_gap, last_loop_end, read_start);
-                }
-
-                const auto grab_start = read_start;
-                if (!cap.grab())
-                {
-                    std::cerr << "Error: Could not grab camera frame." << std::endl;
-                    break;
-                }
-                const auto grab_end = std::chrono::steady_clock::now();
-                record_timing(g_timing.camera_grab, grab_start, grab_end);
-
-                const auto retrieve_start = grab_end;
-                if (!cap.retrieve(frame))
-                {
-                    std::cerr << "Error: Could not retrieve camera frame." << std::endl;
-                    break;
-                }
-                const auto retrieve_end = std::chrono::steady_clock::now();
-                record_timing(g_timing.camera_retrieve, retrieve_start, retrieve_end);
-                record_timing(g_timing.camera_read, read_start, retrieve_end);
-
-                if (last_frame_ts.time_since_epoch().count() != 0)
-                {
-                    const auto interval_us = std::chrono::duration_cast<std::chrono::microseconds>(
-                                                 retrieve_end - last_frame_ts)
-                                                 .count();
-                    if (interval_us >= 0)
-                    {
-                        record_timing_us(g_timing.camera_interval, static_cast<uint64_t>(interval_us));
-                    }
-                }
-                last_frame_ts = retrieve_end;
-                g_camera_frames.fetch_add(1, std::memory_order_relaxed);
-                last_loop_end = std::chrono::steady_clock::now();
-
-                const auto now = std::chrono::steady_clock::now();
-                if (now - last_stats_print >= std::chrono::seconds(1))
-                {
-                    const double stats_elapsed_sec = std::chrono::duration<double>(now - last_stats_print).count();
-                    last_stats_print = now;
-                    const uint64_t camera_frames = g_camera_frames.load(std::memory_order_relaxed);
-                    const double camera_rate = rate_since_last(camera_frames, &last_camera_frames, stats_elapsed_sec);
-
-                    const double camera_read_ms = average_ms_since_last(g_timing.camera_read, &timing_snapshot.camera_read);
-                    const double camera_grab_ms = average_ms_since_last(g_timing.camera_grab, &timing_snapshot.camera_grab);
-                    const double camera_retrieve_ms = average_ms_since_last(g_timing.camera_retrieve, &timing_snapshot.camera_retrieve);
-                    const double camera_interval_ms = average_ms_since_last(g_timing.camera_interval, &timing_snapshot.camera_interval);
-                    const double camera_loop_gap_ms = average_ms_since_last(g_timing.camera_loop_gap, &timing_snapshot.camera_loop_gap);
-
-                    std::cout << std::fixed << std::setprecision(2)
-                              << "CameraOnly: frames=" << camera_frames
-                              << " rate=" << camera_rate
-                              << " read=" << camera_read_ms
-                              << " grab=" << camera_grab_ms
-                              << " retrieve=" << camera_retrieve_ms
-                              << " interval=" << camera_interval_ms
-                              << " loop_gap=" << camera_loop_gap_ms
-                              << " frame_size=" << frame.cols << "x" << frame.rows
-                              << std::endl;
-                }
-            }
-
-            cap.release();
-            return 0;
-        }
-
-        set_crash_phase(kPhaseCreateEngine);
         AsyncDepthAnything async_depth(options.model_path, options.queue_size);
 
-        set_crash_phase(kPhaseDisplayLoop);
         const std::pair<int, int> screen = screen_size();
         double depth_fps_display = 0.0;
-        double camera_fps_display = 0.0;
         auto last_fps_update = std::chrono::steady_clock::now();
-        auto last_stats_print = std::chrono::steady_clock::now();
-        PipelineTimingSnapshot timing_snapshot;
-        uint64_t last_camera_frames = 0;
-        uint64_t last_submitted_frames = 0;
-        uint64_t last_skipped_frames = 0;
-        uint64_t last_completed_frames = 0;
-        uint64_t last_displayed_frames = 0;
 
         std::cout << "Start Async Processing. Press 'q' or ESC to exit." << std::endl;
-        std::cout << "Camera request: /dev/video" << options.camera_index
-                  << " " << options.width << "x" << options.height
-                  << " @ " << options.fps << " FPS"
-                  << ", backend=" << options.camera_backend << std::endl;
-        std::cout << "Actual camera: "
-                  << static_cast<int>(cap.get(cv::CAP_PROP_FRAME_WIDTH)) << "x"
-                  << static_cast<int>(cap.get(cv::CAP_PROP_FRAME_HEIGHT))
-                  << " @ " << cap.get(cv::CAP_PROP_FPS) << " FPS"
-                  << ", FOURCC=" << fourcc_to_string(cap.get(cv::CAP_PROP_FOURCC))
-                  << ", backend_id=" << cap.get(cv::CAP_PROP_BACKEND)
-                  << std::endl;
-        std::cout << "Model: " << options.model_path << std::endl;
 
         cv::namedWindow(kWindowName, cv::WINDOW_NORMAL);
 
@@ -1532,65 +987,32 @@ int main(int argc, char **argv)
         std::exception_ptr inference_error = nullptr;
 
         std::thread capture_thread([&]() {
-            set_crash_phase(kPhaseCaptureThread);
             try
             {
                 uint64_t seq = 0;
-                std::chrono::steady_clock::time_point last_frame_ts;
-                std::chrono::steady_clock::time_point last_loop_end;
                 while (!stop_capture.load(std::memory_order_relaxed))
                 {
                     cv::Mat frame;
-                    const auto read_start = std::chrono::steady_clock::now();
-                    if (last_loop_end.time_since_epoch().count() != 0)
-                    {
-                        record_timing(g_timing.camera_loop_gap, last_loop_end, read_start);
-                    }
-                    const auto grab_start = read_start;
                     if (!cap.grab())
                     {
                         stop_capture.store(true, std::memory_order_relaxed);
                         g_camera_cv.notify_all();
                         break;
                     }
-                    const auto grab_end = std::chrono::steady_clock::now();
-                    record_timing(g_timing.camera_grab, grab_start, grab_end);
 
-                    const auto retrieve_start = grab_end;
                     if (!cap.retrieve(frame))
                     {
                         stop_capture.store(true, std::memory_order_relaxed);
                         g_camera_cv.notify_all();
                         break;
                     }
-                    const auto retrieve_end = std::chrono::steady_clock::now();
-                    record_timing(g_timing.camera_retrieve, retrieve_start, retrieve_end);
-                    record_timing(g_timing.camera_read, read_start, retrieve_end);
-
-                    if (last_frame_ts.time_since_epoch().count() != 0)
-                    {
-                        const auto interval_us = std::chrono::duration_cast<std::chrono::microseconds>(
-                                                     retrieve_end - last_frame_ts)
-                                                     .count();
-                        if (interval_us >= 0)
-                        {
-                            record_timing_us(g_timing.camera_interval, static_cast<uint64_t>(interval_us));
-                        }
-                    }
-                    last_frame_ts = retrieve_end;
 
                     {
-                        ScopedTimer store_timer(g_timing.camera_store);
-                        const auto lock_wait_start = std::chrono::steady_clock::now();
                         std::unique_lock<std::mutex> lock(g_camera_mutex);
-                        record_timing(g_timing.camera_lock_wait, lock_wait_start);
                         g_latest_camera.frame = frame.clone();
                         g_latest_camera.seq = ++seq;
-                        g_camera_timestamps.push_back(std::chrono::steady_clock::now());
                     }
-                    g_camera_frames.fetch_add(1, std::memory_order_relaxed);
                     g_camera_cv.notify_one();
-                    last_loop_end = std::chrono::steady_clock::now();
                 }
             }
             catch (...)
@@ -1602,7 +1024,6 @@ int main(int argc, char **argv)
         });
 
         std::thread inference_thread([&]() {
-            set_crash_phase(kPhaseInferenceThread);
             uint64_t last_seq = 0;
             try
             {
@@ -1611,28 +1032,21 @@ int main(int argc, char **argv)
                     cv::Mat frame;
                     {
                         std::unique_lock<std::mutex> lock(g_camera_mutex);
-                        const auto wait_start = std::chrono::steady_clock::now();
                         g_camera_cv.wait(lock, [&]() {
                             return stop_capture.load(std::memory_order_relaxed) ||
                                    g_latest_camera.seq != last_seq;
                         });
-                        record_timing(g_timing.inference_wait, wait_start);
                         if (stop_capture.load(std::memory_order_relaxed) && g_latest_camera.seq == last_seq)
                         {
                             break;
                         }
-                        const auto copy_start = std::chrono::steady_clock::now();
                         frame = g_latest_camera.frame.clone();
                         last_seq = g_latest_camera.seq;
-                        record_timing(g_timing.inference_copy, copy_start);
                     }
 
                     if (!frame.empty())
                     {
-                        if (!async_depth.try_submit(frame))
-                        {
-                            g_skipped_frames.fetch_add(1, std::memory_order_relaxed);
-                        }
+                        async_depth.try_submit(frame);
                     }
                 }
             }
@@ -1651,7 +1065,6 @@ int main(int argc, char **argv)
             if (since_update >= kFpsUpdateIntervalSec)
             {
                 depth_fps_display = async_depth.completion_fps();
-                camera_fps_display = camera_fps();
                 last_fps_update = now;
             }
 
@@ -1660,126 +1073,40 @@ int main(int argc, char **argv)
             {
                 if (!result.depth.empty())
                 {
+                    cv::Mat depth_colored = create_depth_map(result.depth);
+                    cv::Mat display_content;
+                    if (options.side_by_side)
                     {
-                        ScopedTimer display_timer(g_timing.display_total);
+                        cv::Mat depth_scaled;
+                        cv::resize(depth_colored, depth_scaled, result.original_bgr.size(), 0.0, 0.0, cv::INTER_LINEAR);
+                        cv::hconcat(result.original_bgr, depth_scaled, display_content);
+                    }
+                    else
+                    {
+                        display_content = depth_colored;
+                    }
 
-                        cv::Mat frame_show;
-                        {
-                            ScopedTimer post_timer(g_timing.display_postprocess);
-                            cv::Mat depth_colored = create_depth_map(result.depth);
-                            cv::Mat display_content;
-                            if (options.side_by_side)
-                            {
-                                cv::Mat depth_scaled;
-                                cv::resize(depth_colored, depth_scaled, result.original_bgr.size(), 0.0, 0.0, cv::INTER_LINEAR);
-                                cv::hconcat(result.original_bgr, depth_scaled, display_content);
-                            }
-                            else
-                            {
-                                display_content = depth_colored;
-                            }
+                    cv::Mat frame_show = letterbox_to_screen(display_content, screen.first, screen.second);
+                    draw_fps_overlay(frame_show, depth_fps_display);
+                    draw_model_name_overlay(frame_show, options.model_path);
 
-                            frame_show = letterbox_to_screen(display_content, screen.first, screen.second);
-                            draw_fps_overlay(frame_show, depth_fps_display);
-                            draw_model_name_overlay(frame_show, options.model_path);
-                        }
+                    cv::imshow(kWindowName, frame_show);
+                    set_fps_window_title(depth_fps_display);
 
-                        {
-                            ScopedTimer show_timer(g_timing.display_show);
-                            cv::imshow(kWindowName, frame_show);
-                            set_fps_window_title(depth_fps_display);
-
-                            if (!window_fullscreen)
-                            {
-                                cv::setWindowProperty(kWindowName, cv::WND_PROP_FULLSCREEN, cv::WINDOW_FULLSCREEN);
-                                window_fullscreen = true;
-                            }
-                            if (!launcher_ready)
-                            {
-                                notify_launcher_ready();
-                                launcher_ready = true;
-                            }
-                        }
+                    if (!window_fullscreen)
+                    {
+                        cv::setWindowProperty(kWindowName, cv::WND_PROP_FULLSCREEN, cv::WINDOW_FULLSCREEN);
+                        window_fullscreen = true;
+                    }
+                    if (!launcher_ready)
+                    {
+                        notify_launcher_ready();
+                        launcher_ready = true;
                     }
                 }
             }
 
-            if (now - last_stats_print >= std::chrono::seconds(1))
-            {
-                const double stats_elapsed_sec = std::chrono::duration<double>(now - last_stats_print).count();
-                last_stats_print = now;
-                const uint64_t camera_frames = g_camera_frames.load(std::memory_order_relaxed);
-                const uint64_t submitted_frames = g_submitted_frames.load(std::memory_order_relaxed);
-                const uint64_t skipped_frames = g_skipped_frames.load(std::memory_order_relaxed);
-                const uint64_t completed_frames = g_completed_frames.load(std::memory_order_relaxed);
-                const uint64_t displayed_frames = g_displayed_frames.load(std::memory_order_relaxed);
-
-                const double camera_rate = rate_since_last(camera_frames, &last_camera_frames, stats_elapsed_sec);
-                const double submitted_rate = rate_since_last(submitted_frames, &last_submitted_frames, stats_elapsed_sec);
-                const double skipped_rate = rate_since_last(skipped_frames, &last_skipped_frames, stats_elapsed_sec);
-                const double completed_rate = rate_since_last(completed_frames, &last_completed_frames, stats_elapsed_sec);
-                const double displayed_rate = rate_since_last(displayed_frames, &last_displayed_frames, stats_elapsed_sec);
-
-                const double camera_read_ms = average_ms_since_last(g_timing.camera_read, &timing_snapshot.camera_read);
-                const double camera_grab_ms = average_ms_since_last(g_timing.camera_grab, &timing_snapshot.camera_grab);
-                const double camera_retrieve_ms = average_ms_since_last(g_timing.camera_retrieve, &timing_snapshot.camera_retrieve);
-                const double camera_interval_ms = average_ms_since_last(g_timing.camera_interval, &timing_snapshot.camera_interval);
-                const double camera_loop_gap_ms = average_ms_since_last(g_timing.camera_loop_gap, &timing_snapshot.camera_loop_gap);
-                const double camera_store_ms = average_ms_since_last(g_timing.camera_store, &timing_snapshot.camera_store);
-                const double camera_lock_wait_ms = average_ms_since_last(g_timing.camera_lock_wait, &timing_snapshot.camera_lock_wait);
-                const double inference_wait_ms = average_ms_since_last(g_timing.inference_wait, &timing_snapshot.inference_wait);
-                const double inference_copy_ms = average_ms_since_last(g_timing.inference_copy, &timing_snapshot.inference_copy);
-                const double submit_total_ms = average_ms_since_last(g_timing.submit_total, &timing_snapshot.submit_total);
-                const double preprocess_ms = average_ms_since_last(g_timing.preprocess, &timing_snapshot.preprocess);
-                const double run_async_ms = average_ms_since_last(g_timing.run_async, &timing_snapshot.run_async);
-                const double callback_total_ms = average_ms_since_last(g_timing.callback_total, &timing_snapshot.callback_total);
-                const double callback_tensor_ms = average_ms_since_last(g_timing.callback_tensor, &timing_snapshot.callback_tensor);
-                const double display_total_ms = average_ms_since_last(g_timing.display_total, &timing_snapshot.display_total);
-                const double display_postprocess_ms = average_ms_since_last(g_timing.display_postprocess, &timing_snapshot.display_postprocess);
-                const double display_show_ms = average_ms_since_last(g_timing.display_show, &timing_snapshot.display_show);
-                const double wait_key_ms = average_ms_since_last(g_timing.wait_key, &timing_snapshot.wait_key);
-
-                std::cout << std::fixed << std::setprecision(2);
-                std::cout << "Stats: camera=" << g_camera_frames.load(std::memory_order_relaxed)
-                          << " submitted=" << g_submitted_frames.load(std::memory_order_relaxed)
-                          << " skipped_full=" << g_skipped_frames.load(std::memory_order_relaxed)
-                          << " completed=" << g_completed_frames.load(std::memory_order_relaxed)
-                          << " displayed=" << g_displayed_frames.load(std::memory_order_relaxed)
-                          << " next_display_id=" << async_depth.next_display_id()
-                          << " inflight=" << async_depth.in_flight()
-                          << " camera_fps=" << camera_fps_display
-                          << " depth_fps=" << depth_fps_display
-                          << std::endl;
-                std::cout << "Rates/s: camera=" << camera_rate
-                          << " submitted=" << submitted_rate
-                          << " skipped_full=" << skipped_rate
-                          << " completed=" << completed_rate
-                          << " displayed=" << displayed_rate
-                          << std::endl;
-                std::cout << "Timing avg ms: camera_read=" << camera_read_ms
-                          << " camera_grab=" << camera_grab_ms
-                          << " camera_retrieve=" << camera_retrieve_ms
-                          << " camera_interval=" << camera_interval_ms
-                          << " camera_loop_gap=" << camera_loop_gap_ms
-                          << " camera_store=" << camera_store_ms
-                          << " camera_lock_wait=" << camera_lock_wait_ms
-                          << " inference_wait=" << inference_wait_ms
-                          << " inference_copy=" << inference_copy_ms
-                          << " submit_total=" << submit_total_ms
-                          << " preprocess=" << preprocess_ms
-                          << " run_async_call=" << run_async_ms
-                          << " callback_total=" << callback_total_ms
-                          << " callback_tensor=" << callback_tensor_ms
-                          << " display_total=" << display_total_ms
-                          << " display_post=" << display_postprocess_ms
-                          << " display_show=" << display_show_ms
-                          << " wait_key=" << wait_key_ms
-                          << std::endl;
-            }
-
-            const auto wait_key_start = std::chrono::steady_clock::now();
             const int key = cv::waitKey(1) & 0xff;
-            record_timing(g_timing.wait_key, wait_key_start);
             if (key == 'q' || key == 27)
             {
                 cv::waitKey(500);
@@ -1789,7 +1116,6 @@ int main(int argc, char **argv)
             }
         }
 
-        set_crash_phase(kPhaseShutdown);
         stop_capture.store(true, std::memory_order_relaxed);
         g_camera_cv.notify_all();
         if (capture_thread.joinable())
@@ -1818,7 +1144,7 @@ int main(int argc, char **argv)
     }
     catch (const std::exception &e)
     {
-        std::cerr << "Error during " << crash_phase_name(g_crash_phase) << ": " << e.what() << std::endl;
+        std::cerr << "Error: " << e.what() << std::endl;
         return 1;
     }
 
