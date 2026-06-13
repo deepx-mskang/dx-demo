@@ -5,6 +5,7 @@
 #include <QApplication>
 #include <QCloseEvent>
 #include <QFile>
+#include <QFont>
 #include <QFontDatabase>
 #include <QFrame>
 #include <QGridLayout>
@@ -30,8 +31,10 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <cmath>
 #include <memory>
 #include <mutex>
+#include <unordered_set>
 
 namespace fs = std::filesystem;
 using OcrResultPtr = std::shared_ptr<camocr::OcrResult>;
@@ -85,8 +88,18 @@ fs::path defaultRoot()
 #ifdef CAM_OCR_ROOT_DIR
     return CAM_OCR_ROOT_DIR;
 #else
-    return fs::current_path() / "paddle-ocr" / "cam-ocr";
+    return fs::current_path();
 #endif
+}
+
+fs::path defaultModelsBaseDir(const fs::path& root)
+{
+    return root / "cpp" / "assets";
+}
+
+fs::path defaultModelsDir(const fs::path& root, const std::string& modelProfile)
+{
+    return defaultModelsBaseDir(root) / modelProfile;
 }
 
 void notifyLauncherReady()
@@ -155,27 +168,122 @@ std::vector<std::vector<cv::Point>> toIntPolys(const std::vector<std::vector<cv:
     return polys;
 }
 
-cv::Mat makeLeftDisplayImage(const cv::Mat& bgr, const std::vector<std::vector<cv::Point2f>>& boxes)
+void drawDashedLine(
+    cv::Mat& image,
+    cv::Point p0,
+    cv::Point p1,
+    const cv::Scalar& color,
+    int thickness,
+    int dashLength,
+    int gapLength)
+{
+    const double dx = static_cast<double>(p1.x - p0.x);
+    const double dy = static_cast<double>(p1.y - p0.y);
+    const double length = std::hypot(dx, dy);
+    if (length < 1.0) {
+        return;
+    }
+
+    const double ux = dx / length;
+    const double uy = dy / length;
+    double traveled = 0.0;
+    bool drawSegment = true;
+
+    while (traveled < length) {
+        const double segmentLength = drawSegment ? static_cast<double>(dashLength) : static_cast<double>(gapLength);
+        const double next = std::min(traveled + segmentLength, length);
+        if (drawSegment) {
+            const cv::Point start(
+                static_cast<int>(std::round(p0.x + ux * traveled)),
+                static_cast<int>(std::round(p0.y + uy * traveled)));
+            const cv::Point end(
+                static_cast<int>(std::round(p0.x + ux * next)),
+                static_cast<int>(std::round(p0.y + uy * next)));
+            cv::line(image, start, end, color, thickness, cv::LINE_AA);
+        }
+        traveled = next;
+        drawSegment = !drawSegment;
+    }
+}
+
+void drawDashedPolyline(
+    cv::Mat& image,
+    const std::vector<cv::Point>& poly,
+    const cv::Scalar& color,
+    int thickness,
+    int dashLength = 6,
+    int gapLength = 4)
+{
+    if (poly.size() < 2) {
+        return;
+    }
+
+    for (std::size_t i = 0; i < poly.size(); ++i) {
+        drawDashedLine(image, poly[i], poly[(i + 1) % poly.size()], color, thickness, dashLength, gapLength);
+    }
+}
+
+std::unordered_set<int> recognizedBoxIndices(const std::vector<camocr::OcrText>& texts)
+{
+    std::unordered_set<int> indices;
+    indices.reserve(texts.size());
+    for (const auto& item : texts) {
+        if (item.bboxIndex >= 0 && !item.text.empty() && item.score > kConfidenceThreshold) {
+            indices.insert(item.bboxIndex);
+        }
+    }
+    return indices;
+}
+
+cv::Mat makeLeftDisplayImage(
+    const cv::Mat& bgr,
+    const std::vector<std::vector<cv::Point2f>>& boxes,
+    const std::vector<camocr::OcrText>& texts)
 {
     if (bgr.empty()) {
         return {};
     }
-    cv::Mat overlay = bgr.clone();
+
+    cv::Mat display = bgr.clone();
     const auto polys = toIntPolys(boxes);
-    for (const auto& poly : polys) {
-        if (poly.size() >= 3) {
-            cv::fillPoly(overlay, std::vector<std::vector<cv::Point>>{poly}, cv::Scalar(80, 127, 255));
-            cv::polylines(overlay, poly, true, cv::Scalar(0, 255, 0), 3, cv::LINE_AA);
+    const auto recognized = recognizedBoxIndices(texts);
+
+    constexpr double kFillAlpha = 0.14;
+    const cv::Scalar accentFill(204, 122, 0);       // BGR #007acc
+    const cv::Scalar accentBorder(255, 180, 60);
+    const cv::Scalar emptyBorder(133, 133, 133);    // BGR #858585 (kTextDim)
+
+    for (std::size_t i = 0; i < polys.size(); ++i) {
+        const auto& poly = polys[i];
+        if (poly.size() < 3) {
+            continue;
+        }
+
+        if (recognized.count(static_cast<int>(i)) > 0) {
+            cv::Mat tinted = display.clone();
+            cv::fillPoly(tinted, std::vector<std::vector<cv::Point>>{poly}, accentFill);
+            cv::addWeighted(display, 1.0 - kFillAlpha, tinted, kFillAlpha, 0.0, display);
+            cv::polylines(display, poly, true, accentBorder, 1, cv::LINE_AA);
+        } else {
+            drawDashedPolyline(display, poly, emptyBorder, 1);
         }
     }
-    cv::Mat blended;
-    cv::addWeighted(bgr, 0.5, overlay, 0.5, 0.0, blended);
-    return blended;
+
+    return display;
 }
 
 QString fontPathForLanguage(const fs::path& root, const std::string& language)
 {
-    fs::path fontPath;
+    const fs::path defaultFontPath = root / "cpp" / "assets" / "NotoSansJP-VariableFont_wght.ttf";
+    if (fs::exists(defaultFontPath)) {
+        return QString::fromStdString(defaultFontPath.string());
+    }
+
+    fs::path fontPath = root / "engine" / "fonts" / "NotoSansJP-VariableFont_wght.ttf";
+    if (fs::exists(fontPath)) {
+        return QString::fromStdString(fontPath.string());
+    }
+
     if (language == "korean") {
         fontPath = root / "engine" / "fonts" / "korean_font.ttf";
     } else if (language == "german") {
@@ -183,10 +291,19 @@ QString fontPathForLanguage(const fs::path& root, const std::string& language)
     } else {
         fontPath = root / "engine" / "fonts" / "simfang.ttf";
     }
-    if (!fs::exists(fontPath)) {
-        fontPath = root / "engine" / "fonts" / "NotoSansJP-VariableFont_wght.ttf";
-    }
     return QString::fromStdString(fontPath.string());
+}
+
+QString fontFamilyFromPath(const QString& fontPath)
+{
+    const int fontId = QFontDatabase::addApplicationFont(fontPath);
+    if (fontId >= 0) {
+        const QStringList families = QFontDatabase::applicationFontFamilies(fontId);
+        if (!families.isEmpty()) {
+            return families.front();
+        }
+    }
+    return "Sans Serif";
 }
 
 cv::Mat makeRightDisplayImage(
@@ -201,14 +318,7 @@ cv::Mat makeRightDisplayImage(
     QImage canvas(bgr.cols, bgr.rows, QImage::Format_RGB888);
     canvas.fill(Qt::white);
 
-    QString family = "Sans Serif";
-    const int fontId = QFontDatabase::addApplicationFont(fontPath);
-    if (fontId >= 0) {
-        const QStringList families = QFontDatabase::applicationFontFamilies(fontId);
-        if (!families.isEmpty()) {
-            family = families.front();
-        }
-    }
+    const QString family = fontFamilyFromPath(fontPath);
 
     QPainter painter(&canvas);
     painter.setRenderHint(QPainter::TextAntialiasing, true);
@@ -516,11 +626,11 @@ public:
         grid->setContentsMargins(0, 0, 0, 0);
         grid->setHorizontalSpacing(8);
         grid->setVerticalSpacing(8);
-        grid->addWidget(createMetricCard("DET", &detValue_), 0, 0);
-        grid->addWidget(createMetricCard("CLS", &clsValue_), 0, 1);
-        grid->addWidget(createMetricCard("REC", &recValue_), 0, 2);
-        grid->addWidget(createMetricCard("E2E", &e2eValue_), 1, 0);
-        grid->addWidget(createMetricCard("CPS", &cpsValue_), 1, 1);
+        grid->addWidget(createMetricCard("DET (Detection)", &detValue_), 0, 0);
+        grid->addWidget(createMetricCard("CLS (Classification)", &clsValue_), 0, 1);
+        grid->addWidget(createMetricCard("REC (Recognition)", &recValue_), 0, 2);
+        grid->addWidget(createMetricCard("E2E (End-to-End)", &e2eValue_), 1, 0);
+        grid->addWidget(createMetricCard("CPS (Characters Per Sec)", &cpsValue_), 1, 1);
         grid->addWidget(createMetricCard("CHARS / BOXES", &charsValue_), 1, 2);
         layout->addLayout(grid);
         updateData({});
@@ -691,6 +801,9 @@ private slots:
         updatePerformance(*result);
         updateTextInfo(*result);
         updateRightOverlay(*result);
+        if (!lastFrame_.empty()) {
+            updateLeftPreview(lastFrame_);
+        }
     }
 
     void onCameraFocusState(int ui, bool focusOk)
@@ -816,7 +929,7 @@ private:
         focusLabel->setStyleSheet(QString("color:%1; font-size:12px; border:none; background:transparent;").arg(kTextDim));
         focusSlider_ = new QSlider(Qt::Horizontal);
         focusSlider_->setRange(0, 100);
-        focusSlider_->setFixedWidth(420);
+        focusSlider_->setFixedWidth(450);
         focusSlider_->setEnabled(false);
         focusSlider_->setStyleSheet(QString(R"(
             QSlider::groove:horizontal { height: 6px; background: %1; border-radius: 3px; }
@@ -865,6 +978,7 @@ private:
 
         infoText_ = new QTextEdit();
         infoText_->setReadOnly(true);
+        infoText_->setFont(QFont(fontFamilyFromPath(fontPath_), 14));
         infoText_->setTextInteractionFlags(Qt::TextSelectableByMouse | Qt::TextSelectableByKeyboard);
         infoText_->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
         infoText_->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
@@ -872,7 +986,6 @@ private:
             QTextEdit {
                 line-height: 1.2;
                 padding: 8px;
-                font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
                 font-size: 14px;
                 background-color: %1;
                 color: %2;
@@ -898,7 +1011,7 @@ private:
         }
 
         if (lastResult_) {
-            setScaledPixmap(leftImageLabel_, makeLeftDisplayImage(frame, lastResult_->boxes));
+            setScaledPixmap(leftImageLabel_, makeLeftDisplayImage(frame, lastResult_->boxes, lastResult_->texts));
         } else {
             setScaledPixmap(leftImageLabel_, frame);
         }
@@ -964,6 +1077,7 @@ struct Args {
     std::string modelProfile = "mobile";
     CameraConfig camera;
     bool enableUvdoc = false;
+    int recAsyncQueueSize = camocr::kRecAsyncQueueDefault;
 };
 
 int parsePositiveInt(const QString& value, const char* optionName)
@@ -1016,8 +1130,8 @@ void printUsage()
     std::cout
         << "Usage: cam_ocr_demo [--video PATH] [--camera N] [--resolution WIDTHxHEIGHT]\n"
         << "                    [--width W --height H] [--fps FPS]\n"
-        << "                    [--model mobile|server] [--language ch|korean|german]\n"
-        << "                    [--enable-uvdoc]\n";
+        << "                    [--model mobile|server|hybrid] [--language ch|korean|german]\n"
+        << "                    [--rec-queue-size N] [--enable-uvdoc]\n";
 }
 
 Args parseArgs(const QStringList& args)
@@ -1041,6 +1155,12 @@ Args parseArgs(const QStringList& args)
             parsed.modelProfile = args[++i].toStdString();
         } else if (arg == "--language" && i + 1 < args.size()) {
             parsed.language = args[++i].toStdString();
+        } else if ((arg == "--rec-queue-size" || arg == "--rec-async-queue") && i + 1 < args.size()) {
+            parsed.recAsyncQueueSize = parsePositiveInt(args[++i], "--rec-queue-size");
+            if (parsed.recAsyncQueueSize > camocr::kRecAsyncQueueMax) {
+                std::cerr << "Invalid --rec-queue-size: max is " << camocr::kRecAsyncQueueMax << std::endl;
+                std::exit(2);
+            }
         } else if (arg == "--enable-uvdoc") {
             parsed.enableUvdoc = true;
         } else if (arg == "--hide-preview") {
@@ -1059,8 +1179,8 @@ Args parseArgs(const QStringList& args)
         std::cerr << "Unsupported language: " << parsed.language << ". Falling back to ch.\n";
         parsed.language = "ch";
     }
-    if (parsed.modelProfile != "mobile" && parsed.modelProfile != "server") {
-        std::cerr << "Unsupported model profile: " << parsed.modelProfile << ". Use mobile or server.\n";
+    if (parsed.modelProfile != "mobile" && parsed.modelProfile != "server" && parsed.modelProfile != "hybrid") {
+        std::cerr << "Unsupported model profile: " << parsed.modelProfile << ". Use mobile, server, or hybrid.\n";
         std::exit(2);
     }
     return parsed;
@@ -1083,11 +1203,15 @@ int main(int argc, char** argv)
     std::cout << "v5 detection model: Modified to support 640 and 960 resolutions" << std::endl;
 
     const fs::path root = defaultRoot();
+    const fs::path modelsBaseDir = defaultModelsBaseDir(root);
     camocr::EngineOptions options;
     options.rootDir = root;
+    options.modelsBaseDir = modelsBaseDir;
     options.language = args.language;
     options.modelProfile = args.modelProfile;
+    std::cout << "Model directory: " << defaultModelsDir(root, args.modelProfile).string() << std::endl;
     options.enableUvdoc = args.enableUvdoc;
+    options.recAsyncQueueSize = args.recAsyncQueueSize;
 
     std::shared_ptr<camocr::PaddleOcrEngine> engine;
     try {
