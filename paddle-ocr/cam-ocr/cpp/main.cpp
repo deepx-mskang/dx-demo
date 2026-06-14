@@ -34,6 +34,7 @@
 #include <cmath>
 #include <memory>
 #include <mutex>
+#include <unordered_map>
 #include <unordered_set>
 
 namespace fs = std::filesystem;
@@ -235,6 +236,63 @@ std::unordered_set<int> recognizedBoxIndices(const std::vector<camocr::OcrText>&
     return indices;
 }
 
+struct RightTextLayout {
+    QString text;
+    int originX = 0;
+    int originY = 0;
+    int boxW = 0;
+    int boxH = 0;
+    int padding = 0;
+    int fontSize = 0;
+    int pendingFontSize = 0;
+    int pendingFontDirection = 0;
+    int pendingFontCount = 0;
+};
+
+using RightTextLayoutCache = std::unordered_map<int, RightTextLayout>;
+
+bool isSimilarLayoutText(const QString& previous, const QString& current)
+{
+    if (previous == current) {
+        return true;
+    }
+    if (previous.isEmpty() || current.isEmpty()) {
+        return false;
+    }
+
+    const int previousLen = previous.size();
+    const int currentLen = current.size();
+    const int maxLen = std::max(previousLen, currentLen);
+    const int allowedDistance = std::max(1, maxLen / 5);
+    if (std::abs(previousLen - currentLen) > allowedDistance) {
+        return false;
+    }
+
+    std::vector<int> prevRow(currentLen + 1);
+    std::vector<int> curRow(currentLen + 1);
+    for (int j = 0; j <= currentLen; ++j) {
+        prevRow[j] = j;
+    }
+    for (int i = 1; i <= previousLen; ++i) {
+        curRow[0] = i;
+        int rowMin = curRow[0];
+        for (int j = 1; j <= currentLen; ++j) {
+            const int substitutionCost = previous[i - 1] == current[j - 1] ? 0 : 1;
+            curRow[j] = std::min({
+                prevRow[j] + 1,
+                curRow[j - 1] + 1,
+                prevRow[j - 1] + substitutionCost,
+            });
+            rowMin = std::min(rowMin, curRow[j]);
+        }
+        if (rowMin > allowedDistance) {
+            return false;
+        }
+        std::swap(prevRow, curRow);
+    }
+    return prevRow[currentLen] <= allowedDistance;
+}
+
 cv::Mat makeLeftDisplayImage(
     const cv::Mat& bgr,
     const std::vector<std::vector<cv::Point2f>>& boxes,
@@ -309,7 +367,8 @@ QString fontFamilyFromPath(const QString& fontPath)
 cv::Mat makeRightDisplayImage(
     const cv::Mat& bgr,
     const std::vector<camocr::OcrText>& texts,
-    const QString& fontPath)
+    const QString& fontPath,
+    RightTextLayoutCache* layoutCache)
 {
     if (bgr.empty()) {
         return {};
@@ -324,6 +383,48 @@ cv::Mat makeRightDisplayImage(
     painter.setRenderHint(QPainter::TextAntialiasing, true);
     painter.setPen(Qt::black);
 
+    constexpr int kPositionSnap = 4;
+    constexpr int kFontSizeSnap = 2;
+    constexpr double kSizeHysteresisRatio = 0.15;
+    constexpr int kFontChangeConfirmFrames = 3;
+    const auto snapToGrid = [](float value, int grid) {
+        return static_cast<int>(std::round(value / static_cast<float>(grid))) * grid;
+    };
+    const auto withinRatio = [](int previous, int current, double ratio) {
+        if (previous <= 0 || current <= 0) {
+            return false;
+        }
+        return std::abs(previous - current) <= static_cast<int>(std::round(previous * ratio));
+    };
+    const auto boxIoU = [](int ax, int ay, int aw, int ah, int bx, int by, int bw, int bh) {
+        const int left = std::max(ax, bx);
+        const int top = std::max(ay, by);
+        const int right = std::min(ax + aw, bx + bw);
+        const int bottom = std::min(ay + ah, by + bh);
+        const int intersectionW = std::max(0, right - left);
+        const int intersectionH = std::max(0, bottom - top);
+        const int intersection = intersectionW * intersectionH;
+        const int areaA = std::max(0, aw) * std::max(0, ah);
+        const int areaB = std::max(0, bw) * std::max(0, bh);
+        const int united = areaA + areaB - intersection;
+        return united > 0 ? static_cast<double>(intersection) / static_cast<double>(united) : 0.0;
+    };
+    const auto fitFontSize = [&](const QString& text, int targetBoxW, int targetBoxH, int targetPadding) {
+        int size = std::max(8, snapToGrid(static_cast<float>(targetBoxH) * 0.75f, kFontSizeSnap));
+        QFont font(family, size);
+        for (; size > 7; size -= kFontSizeSnap) {
+            font.setPointSize(size);
+            QFontMetrics metrics(font);
+            if (metrics.horizontalAdvance(text) <= std::max(8, targetBoxW - 2 * targetPadding) &&
+                metrics.height() <= std::max(8, targetBoxH - 2 * targetPadding)) {
+                break;
+            }
+        }
+        return size;
+    };
+
+    std::unordered_set<int> visibleKeys;
+    int fallbackKey = -1;
     for (const auto& item : texts) {
         if (item.text.empty() || item.bbox.size() != 4) {
             continue;
@@ -340,24 +441,119 @@ cv::Mat makeRightDisplayImage(
             maxY = std::max(maxY, p.y);
         }
 
-        const int boxW = std::max(10, static_cast<int>(maxX - minX));
-        const int boxH = std::max(10, static_cast<int>(maxY - minY));
+        const int originX = std::clamp(snapToGrid(minX, kPositionSnap), 0, bgr.cols - 1);
+        const int originY = std::clamp(snapToGrid(minY, kPositionSnap), 0, bgr.rows - 1);
+        const int boxW = std::max(10, snapToGrid(maxX - minX, kPositionSnap));
+        const int boxH = std::max(10, snapToGrid(maxY - minY, kPositionSnap));
         const int padding = std::max(2, std::min(boxW, boxH) / 20);
         const QString qText = QString::fromUtf8(item.text.c_str());
 
-        int fontSize = std::max(8, static_cast<int>(boxH * 0.75));
-        QFont font(family, fontSize);
-        for (; fontSize > 7; --fontSize) {
-            font.setPointSize(fontSize);
-            QFontMetrics metrics(font);
-            if (metrics.horizontalAdvance(qText) <= std::max(8, boxW - 2 * padding) &&
-                metrics.height() <= std::max(8, boxH - 2 * padding)) {
-                break;
+        int drawOriginX = originX;
+        int drawOriginY = originY;
+        int drawBoxW = boxW;
+        int drawBoxH = boxH;
+        int drawPadding = padding;
+        int pendingFontSize = 0;
+        int pendingFontDirection = 0;
+        int pendingFontCount = 0;
+
+        const int cacheKey = item.bboxIndex >= 0 ? item.bboxIndex : fallbackKey--;
+        visibleKeys.insert(cacheKey);
+        bool hasReusableCache = false;
+        bool hasSimilarText = false;
+        if (layoutCache) {
+            auto cached = layoutCache->find(cacheKey);
+            if (cached != layoutCache->end()) {
+                pendingFontSize = cached->second.pendingFontSize;
+                pendingFontDirection = cached->second.pendingFontDirection;
+                pendingFontCount = cached->second.pendingFontCount;
+
+                hasSimilarText = isSimilarLayoutText(cached->second.text, qText);
+                const bool stableMove =
+                    std::abs(cached->second.originX - originX) <= kPositionSnap &&
+                    std::abs(cached->second.originY - originY) <= kPositionSnap;
+                const bool stableSize =
+                    withinRatio(cached->second.boxW, boxW, kSizeHysteresisRatio) &&
+                    withinRatio(cached->second.boxH, boxH, kSizeHysteresisRatio);
+                const double overlap = boxIoU(
+                    cached->second.originX,
+                    cached->second.originY,
+                    cached->second.boxW,
+                    cached->second.boxH,
+                    originX,
+                    originY,
+                    boxW,
+                    boxH);
+                const bool stableOverlap = overlap >= 0.70;
+
+                if (hasSimilarText && ((stableMove && stableSize) || stableOverlap)) {
+                    drawOriginX = cached->second.originX;
+                    drawOriginY = cached->second.originY;
+                    drawBoxW = cached->second.boxW;
+                    drawBoxH = cached->second.boxH;
+                    drawPadding = cached->second.padding;
+                    hasReusableCache = true;
+                }
             }
+        }
+
+        const int desiredFontSize = fitFontSize(qText, drawBoxW, drawBoxH, drawPadding);
+        int fontSize = desiredFontSize;
+        if (layoutCache) {
+            auto cached = layoutCache->find(cacheKey);
+            if (cached != layoutCache->end() && cached->second.fontSize > 0 &&
+                hasSimilarText && desiredFontSize != cached->second.fontSize) {
+                const int direction = desiredFontSize > cached->second.fontSize ? 1 : -1;
+                if (cached->second.pendingFontDirection == direction &&
+                    cached->second.pendingFontSize == desiredFontSize) {
+                    pendingFontCount = cached->second.pendingFontCount + 1;
+                } else {
+                    pendingFontCount = 1;
+                }
+                pendingFontDirection = direction;
+                pendingFontSize = desiredFontSize;
+                if (pendingFontCount < kFontChangeConfirmFrames) {
+                    fontSize = cached->second.fontSize;
+                } else {
+                    pendingFontSize = 0;
+                    pendingFontDirection = 0;
+                    pendingFontCount = 0;
+                }
+            } else if (cached != layoutCache->end() && hasReusableCache) {
+                fontSize = cached->second.fontSize;
+                pendingFontSize = 0;
+                pendingFontDirection = 0;
+                pendingFontCount = 0;
+            }
+        }
+
+        QFont font(family, fontSize);
+        if (layoutCache) {
+            (*layoutCache)[cacheKey] = RightTextLayout{
+                qText,
+                drawOriginX,
+                drawOriginY,
+                drawBoxW,
+                drawBoxH,
+                drawPadding,
+                fontSize,
+                pendingFontSize,
+                pendingFontDirection,
+                pendingFontCount,
+            };
         }
         painter.setFont(font);
         const QFontMetrics metrics(font);
-        painter.drawText(QPointF(item.bbox[0].x + padding, item.bbox[0].y + padding + metrics.ascent()), qText);
+        painter.drawText(QPointF(drawOriginX + drawPadding, drawOriginY + drawPadding + metrics.ascent()), qText);
+    }
+    if (layoutCache) {
+        for (auto it = layoutCache->begin(); it != layoutCache->end();) {
+            if (visibleKeys.count(it->first) == 0) {
+                it = layoutCache->erase(it);
+            } else {
+                ++it;
+            }
+        }
     }
     painter.end();
     return qImageToBgr(canvas);
@@ -719,6 +915,7 @@ public:
         lastShownResultFrameId_ = 0;
         lastResult_.reset();
         lastRightImage_.release();
+        rightTextLayoutCache_.clear();
         cameraThread_ = new CameraThread(cameraConfig_, videoPath_, this);
         ocrThread_ = new OcrProcessThread(engine_, this);
 
@@ -1019,7 +1216,11 @@ private:
 
     void updateRightOverlay(const camocr::OcrResult& result)
     {
-        lastRightImage_ = makeRightDisplayImage(result.preprocessedImage, result.texts, fontPath_);
+        lastRightImage_ = makeRightDisplayImage(
+            result.preprocessedImage,
+            result.texts,
+            fontPath_,
+            &rightTextLayoutCache_);
         if (!lastRightImage_.empty()) {
             setScaledPixmap(rightImageLabel_, lastRightImage_);
         }
@@ -1069,6 +1270,7 @@ private:
     cv::Mat lastFrame_;
     cv::Mat lastRightImage_;
     OcrResultPtr lastResult_;
+    RightTextLayoutCache rightTextLayoutCache_;
 };
 
 struct Args {

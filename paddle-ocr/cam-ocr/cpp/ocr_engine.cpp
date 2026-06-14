@@ -111,12 +111,6 @@ void PaddleOcrEngine::validateModelInput(
     const std::size_t shapeBytes =
         static_cast<std::size_t>(shape.height) * shape.width * shape.channels;
 
-    std::cout << "[OCR] " << stage << " input check (" << modelName << "): "
-              << "mat=" << input.cols << "x" << input.rows << "x" << input.channels()
-              << " (" << actualBytes << " bytes), "
-              << "model=" << shape.width << "x" << shape.height << "x" << shape.channels
-              << " (" << shape.expectedBytes << " bytes expected)" << std::endl;
-
     assert(shape.height > 0);
     assert(shape.width > 0);
     assert(shape.channels > 0);
@@ -733,10 +727,6 @@ std::vector<OcrText> PaddleOcrEngine::recognize(
         const ModelInputShape modelShape = getModelInputShape(engine);
         cv::Mat input = resizePpocr(crops[i], modelShape.height, modelShape.width, nullptr);
         validateModelInput(input, modelShape, "recognition", engine.GetModelName());
-
-        std::cout << "[OCR] Recognition async submit: ratio " << ratio
-                  << " (" << recModelPaths_.at(ratio).filename().string()
-                  << ") crop " << input.cols << "x" << input.rows << std::endl;
 
         if (!acquireRecInflightSlot()) {
             throw std::runtime_error("Failed to acquire recognition async queue slot");

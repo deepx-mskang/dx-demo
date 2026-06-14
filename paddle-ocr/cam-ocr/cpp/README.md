@@ -5,6 +5,7 @@ This is a Qt5/OpenCV C++ implementation of `../demo-ocr.py`.
 ## Build
 
 ```bash
+sudo apt install -y qtbase5-dev qtchooser qt5-qmake qtbase5-dev-tools
 cd paddle-ocr/cam-ocr/cpp
 cmake -S . -B build
 cmake --build build -j
