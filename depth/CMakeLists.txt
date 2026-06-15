@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.14)
-project(cpp_depth_async DESCRIPTION "Depth Anything async C++ demo")
+project(depth_demo DESCRIPTION "Depth Anything async C++ demo")
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -21,41 +21,34 @@ if(NOT DEFINED DEPTH_ROOT_OVERRIDE)
     get_filename_component(DEPTH_ROOT_OVERRIDE "${CMAKE_CURRENT_SOURCE_DIR}/../../depth" ABSOLUTE)
 endif()
 
-add_executable(cpp_depth
+add_executable(depth-demo
     main.cpp
 )
 
-add_executable(camera_test
-    test.cpp
-)
 
-target_compile_definitions(cpp_depth PRIVATE DEPTH_ROOT_DIR="${DEPTH_ROOT_OVERRIDE}")
+target_compile_definitions(depth-demo PRIVATE DEPTH_ROOT_DIR="${DEPTH_ROOT_OVERRIDE}")
 
 if(X11_FOUND)
-    target_compile_definitions(cpp_depth PRIVATE USE_X11)
+    target_compile_definitions(depth-demo PRIVATE USE_X11)
 endif()
 
-target_include_directories(cpp_depth PRIVATE
+target_include_directories(depth-demo PRIVATE
     ${OpenCV_INCLUDE_DIRS}
 )
 
-target_compile_options(cpp_depth PRIVATE -Wall -Wextra -O3)
-target_compile_options(camera_test PRIVATE -Wall -Wextra -O3)
+target_compile_options(depth-demo PRIVATE -Wall -Wextra -O3)
 
 if(NOT MSVC)
-    target_link_options(cpp_depth PRIVATE -rdynamic)
+    target_link_options(depth-demo PRIVATE -rdynamic)
 endif()
 
-target_link_libraries(cpp_depth
+target_link_libraries(depth-demo
     ${OpenCV_LIBS}
     ${DXRT_LIB}
     pthread
 )
 
-target_link_libraries(camera_test
-    ${OpenCV_LIBS}
-)
 
 if(X11_FOUND)
-    target_link_libraries(cpp_depth ${X11_LIBRARIES})
+    target_link_libraries(depth-demo ${X11_LIBRARIES})
 endif()

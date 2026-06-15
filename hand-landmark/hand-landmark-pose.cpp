@@ -1689,7 +1689,7 @@ void run_detection_loop(const Options& options, FrameView* view, std::atomic<boo
 
         cv::VideoCapture cap;
         if (options.use_camera) {
-            cap.open(options.camera_index, cv::CAP_ANY);
+            cap.open(options.camera_index, cv::CAP_V4L2);
             cap.set(cv::CAP_PROP_FOURCC, cv::VideoWriter::fourcc('M', 'J', 'P', 'G'));
             cap.set(cv::CAP_PROP_FRAME_WIDTH, options.camera_width);
             cap.set(cv::CAP_PROP_FRAME_HEIGHT, options.camera_height);

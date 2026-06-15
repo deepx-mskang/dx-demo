@@ -12,6 +12,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <queue>
 #include <stdexcept>
 #include <string>
@@ -35,7 +36,7 @@ constexpr int kDefaultCameraIndex = 0;
 constexpr int kDefaultCameraWidth = 640;
 constexpr int kDefaultCameraHeight = 480;
 constexpr int kDefaultCameraFps = 30;
-constexpr int kMaxAsyncQueueSize = 4;
+constexpr int kMaxAsyncQueueSize = 10;
 constexpr double kFpsWindowSec = 3.0;
 constexpr double kFpsUpdateIntervalSec = 1.0;
 const char *kWindowName = "Depth Anything v2 Demo";
@@ -49,6 +50,7 @@ bool file_exists(const std::string &path)
 struct Options
 {
     std::string model_path;
+    std::string input_path;
     int camera_index = kDefaultCameraIndex;
     int width = kDefaultCameraWidth;
     int height = kDefaultCameraHeight;
@@ -58,6 +60,7 @@ struct Options
     std::string camera_backend = "any";
     std::string camera_fourcc;
     bool side_by_side = false;
+    bool no_ui = false;
 };
 
 struct CameraPacket
@@ -155,8 +158,9 @@ void print_usage(const char *argv0)
     std::cout
         << "Usage: " << argv0 << " --model <PATH> [OPTIONS]\n"
         << "  -m, --model <PATH>          Path to .dxnn model (required)\n"
+        << "  -v, --video <PATH>          Video file input path (default: use camera)\n"
         << "  -s, --side                  Show original and depth map side by side\n"
-        << "      --camera-index <N>      Camera index (default: 0)\n"
+        << "  -c, --camera <N>            Camera index (default: 0)\n"
         << "      --width <N>             Camera width (default: 640)\n"
         << "      --height <N>            Camera height (default: 480)\n"
         << "      --fps <N>               Camera FPS request (default: 30)\n"
@@ -166,6 +170,7 @@ void print_usage(const char *argv0)
         << "      --camera-buffer-size <N>\n"
         << "                              Set OpenCV camera buffer size when N > 0\n"
         << "      --camera-fourcc CODE    Request camera pixel format, e.g. MJPG or YUYV\n"
+        << "      --no-ui                 Disable window rendering and UI overlays\n"
         << "  -h, --help                  Show this help\n";
 }
 
@@ -192,16 +197,25 @@ bool parse_args(int argc, char **argv, Options *options)
             }
             options->model_path = value;
         }
+        else if (arg == "-v" || arg == "--video")
+        {
+            const char *value = require_value(arg.c_str());
+            if (value == nullptr)
+            {
+                return false;
+            }
+            options->input_path = value;
+        }
         else if (arg == "-s" || arg == "--side")
         {
             options->side_by_side = true;
         }
-        else if (arg == "--camera-index")
+        else if (arg == "-c" || arg == "--camera")
         {
             const char *value = require_value(arg.c_str());
             if (value == nullptr || !parse_int_value(value, &options->camera_index) || options->camera_index < 0)
             {
-                std::cerr << "Error: --camera-index expects a non-negative integer" << std::endl;
+                std::cerr << "Error: --camera expects a non-negative integer" << std::endl;
                 return false;
             }
         }
@@ -280,6 +294,10 @@ bool parse_args(int argc, char **argv, Options *options)
                 return false;
             }
         }
+        else if (arg == "--no-ui")
+        {
+            options->no_ui = true;
+        }
         else if (arg == "-h" || arg == "--help")
         {
             print_usage(argv[0]);
@@ -316,6 +334,11 @@ int camera_backend_api(const std::string &backend)
         return cv::CAP_V4L2;
     }
     return cv::CAP_ANY;
+}
+
+bool use_video_file_input(const Options &options)
+{
+    return !options.input_path.empty();
 }
 
 std::pair<int, int> screen_size()
@@ -358,7 +381,89 @@ cv::Mat letterbox_to_screen(const cv::Mat &img, int screen_w, int screen_h)
     return canvas;
 }
 
-void draw_fps_overlay(cv::Mat &bgr, double fps)
+struct OverlaySprite
+{
+    cv::Mat image;
+    cv::Mat mask;
+    cv::Point anchor;
+};
+
+OverlaySprite make_overlay_sprite(const std::string &text,
+                                  int font,
+                                  double scale,
+                                  int thick,
+                                  int pad_x,
+                                  int pad_y,
+                                  const cv::Scalar &panel_color,
+                                  const cv::Scalar &border_color,
+                                  const cv::Scalar &text_color,
+                                  const cv::Scalar &shadow_color,
+                                  bool add_left_stripe,
+                                  const cv::Scalar &stripe_color)
+{
+    OverlaySprite sprite;
+
+    int baseline = 0;
+    const cv::Size text_size = cv::getTextSize(text, font, scale, thick, &baseline);
+    const int box_w = text_size.width + pad_x * 2;
+    const int box_h = text_size.height + baseline + pad_y * 2;
+    sprite.image = cv::Mat(box_h, box_w, CV_8UC4, cv::Scalar(0, 0, 0, 0));
+
+    cv::rectangle(sprite.image, cv::Rect(0, 0, box_w, box_h),
+                  cv::Scalar(panel_color[0], panel_color[1], panel_color[2], 196), cv::FILLED, cv::LINE_AA);
+    cv::rectangle(sprite.image, cv::Rect(0, 0, box_w, box_h),
+                  cv::Scalar(border_color[0], border_color[1], border_color[2], 255), 1, cv::LINE_AA);
+
+    if (add_left_stripe)
+    {
+        const int stripe_w = std::min(6, box_w);
+        cv::rectangle(sprite.image, cv::Rect(0, 0, stripe_w, box_h),
+                      cv::Scalar(stripe_color[0], stripe_color[1], stripe_color[2], 255), cv::FILLED, cv::LINE_AA);
+    }
+
+    const int tx = pad_x;
+    const int ty = pad_y + text_size.height;
+    const cv::Point offsets[] = {
+        {-1, -1}, {-1, 1}, {1, -1}, {1, 1}, {0, -1}, {0, 1}, {-1, 0}, {1, 0}};
+    for (const cv::Point &offset : offsets)
+    {
+        cv::putText(sprite.image, text, cv::Point(tx, ty) + offset, font, scale,
+                    cv::Scalar(shadow_color[0], shadow_color[1], shadow_color[2], 255), thick + 1, cv::LINE_AA);
+    }
+    cv::putText(sprite.image, text, cv::Point(tx, ty), font, scale,
+                cv::Scalar(text_color[0], text_color[1], text_color[2], 255), thick, cv::LINE_AA);
+
+    std::vector<cv::Mat> channels;
+    cv::split(sprite.image, channels);
+    sprite.mask = channels[3];
+    return sprite;
+}
+
+void blend_overlay_sprite(cv::Mat &bgr, const OverlaySprite &sprite)
+{
+    if (bgr.empty() || sprite.image.empty())
+    {
+        return;
+    }
+
+    const int x0 = sprite.anchor.x;
+    const int y0 = sprite.anchor.y;
+    const int x1 = std::min(x0 + sprite.image.cols, bgr.cols);
+    const int y1 = std::min(y0 + sprite.image.rows, bgr.rows);
+    if (x0 < 0 || y0 < 0 || x1 <= x0 || y1 <= y0)
+    {
+        return;
+    }
+
+    const cv::Rect dst_rect(x0, y0, x1 - x0, y1 - y0);
+    const cv::Rect src_rect(0, 0, dst_rect.width, dst_rect.height);
+    std::vector<cv::Mat> channels;
+    cv::split(sprite.image(src_rect), channels);
+    cv::merge(std::vector<cv::Mat>{channels[0], channels[1], channels[2]}, channels[0]);
+    channels[0].copyTo(bgr(dst_rect), sprite.mask(src_rect));
+}
+
+OverlaySprite make_fps_overlay_sprite(double fps)
 {
     char text[64];
     std::snprintf(text, sizeof(text), "%.1f FPS", fps);
@@ -368,45 +473,26 @@ void draw_fps_overlay(cv::Mat &bgr, double fps)
     const int pad_x = 24;
     const int pad_y = 17;
     const int margin = 15;
+    OverlaySprite sprite = make_overlay_sprite(text, font, scale, thick, pad_x, pad_y,
+                                               cv::Scalar(38, 40, 44), cv::Scalar(96, 102, 110),
+                                               cv::Scalar(236, 240, 245), cv::Scalar(0, 0, 0),
+                                               true, cv::Scalar(92, 168, 255));
+    sprite.anchor = cv::Point(margin, margin);
+    return sprite;
+}
 
-    int baseline = 0;
-    const cv::Size text_size = cv::getTextSize(text, font, scale, thick, &baseline);
-    const int box_w = text_size.width + pad_x * 2;
-    const int box_h = text_size.height + baseline + pad_y * 2;
-    const int x0 = std::min(margin, std::max(0, bgr.cols - box_w - margin));
-    const int y0 = std::min(margin, std::max(0, bgr.rows - box_h - margin));
-    const int x1 = std::min(x0 + box_w, bgr.cols);
-    const int y1 = std::min(y0 + box_h, bgr.rows);
-    if (x1 <= x0 + 4 || y1 <= y0 + 4)
+void place_fps_overlay_sprite(OverlaySprite *sprite, const cv::Size &frame_size)
+{
+    if (sprite == nullptr)
     {
         return;
     }
-
-    cv::Mat roi = bgr(cv::Rect(x0, y0, x1 - x0, y1 - y0));
-    cv::Mat panel(roi.size(), roi.type(), cv::Scalar(38, 40, 44));
-    cv::addWeighted(roi, 0.52, panel, 0.48, 0.0, roi);
-
-    const int stripe_w = std::min(6, x1 - x0);
-    if (stripe_w > 0)
-    {
-        cv::Mat stripe = bgr(cv::Rect(x0, y0, stripe_w, y1 - y0));
-        cv::Mat accent(stripe.size(), stripe.type(), cv::Scalar(92, 168, 255));
-        cv::addWeighted(stripe, 0.35, accent, 0.65, 0.0, stripe);
-    }
-
-    cv::rectangle(bgr, cv::Rect(x0, y0, x1 - x0, y1 - y0), cv::Scalar(96, 102, 110), 1, cv::LINE_AA);
-    const int tx = x0 + pad_x;
-    const int ty = y0 + pad_y + text_size.height;
-    const cv::Point offsets[] = {
-        {-1, -1}, {-1, 1}, {1, -1}, {1, 1}, {0, -1}, {0, 1}, {-1, 0}, {1, 0}};
-    for (const cv::Point &offset : offsets)
-    {
-        cv::putText(bgr, text, cv::Point(tx, ty) + offset, font, scale, cv::Scalar(0, 0, 0), thick + 1, cv::LINE_AA);
-    }
-    cv::putText(bgr, text, cv::Point(tx, ty), font, scale, cv::Scalar(236, 240, 245), thick, cv::LINE_AA);
+    const int margin = 15;
+    sprite->anchor.x = std::max(0, frame_size.width - sprite->image.cols - margin);
+    sprite->anchor.y = std::max(0, margin);
 }
 
-void draw_model_name_overlay(cv::Mat &bgr, const std::string &model_path)
+OverlaySprite make_model_overlay_sprite(const std::string &model_path)
 {
     const std::string text = "Model: " + basename_of(model_path);
     const int font = cv::FONT_HERSHEY_DUPLEX;
@@ -415,33 +501,23 @@ void draw_model_name_overlay(cv::Mat &bgr, const std::string &model_path)
     const int pad_x = 21;
     const int pad_y = 14;
     const int margin = 12;
+    OverlaySprite sprite = make_overlay_sprite(text, font, scale, thick, pad_x, pad_y,
+                                               cv::Scalar(32, 34, 38), cv::Scalar(80, 86, 94),
+                                               cv::Scalar(220, 224, 230), cv::Scalar(0, 0, 0),
+                                               false, cv::Scalar());
+    sprite.anchor = cv::Point(margin, margin);
+    return sprite;
+}
 
-    int baseline = 0;
-    const cv::Size text_size = cv::getTextSize(text, font, scale, thick, &baseline);
-    const int box_w = text_size.width + pad_x * 2;
-    const int box_h = text_size.height + baseline + pad_y * 2;
-    const int x0 = std::max(margin, (bgr.cols - box_w) / 2);
-    const int y0 = margin;
-    const int x1 = std::min(x0 + box_w, bgr.cols);
-    const int y1 = std::min(y0 + box_h, bgr.rows);
-    if (x1 <= x0 + 4 || y1 <= y0 + 4)
+void place_model_overlay_sprite(OverlaySprite *sprite, const cv::Size &frame_size)
+{
+    if (sprite == nullptr)
     {
         return;
     }
-
-    cv::Mat roi = bgr(cv::Rect(x0, y0, x1 - x0, y1 - y0));
-    cv::Mat panel(roi.size(), roi.type(), cv::Scalar(32, 34, 38));
-    cv::addWeighted(roi, 0.45, panel, 0.55, 0.0, roi);
-    cv::rectangle(bgr, cv::Rect(x0, y0, x1 - x0, y1 - y0), cv::Scalar(80, 86, 94), 1, cv::LINE_AA);
-
-    const int tx = x0 + pad_x;
-    const int ty = y0 + pad_y + text_size.height;
-    const cv::Point offsets[] = {{-1, -1}, {-1, 1}, {1, -1}, {1, 1}, {0, -1}, {0, 1}};
-    for (const cv::Point &offset : offsets)
-    {
-        cv::putText(bgr, text, cv::Point(tx, ty) + offset, font, scale, cv::Scalar(0, 0, 0), thick + 1, cv::LINE_AA);
-    }
-    cv::putText(bgr, text, cv::Point(tx, ty), font, scale, cv::Scalar(220, 224, 230), thick, cv::LINE_AA);
+    const int margin = 12;
+    sprite->anchor.x = std::max(margin, (frame_size.width - sprite->image.cols) / 2);
+    sprite->anchor.y = margin;
 }
 
 int64_t shape_dim(const std::vector<int64_t> &shape, std::size_t index, int64_t fallback)
@@ -477,7 +553,12 @@ public:
         try
         {
             dxrt::InferenceOption option;
-            engine_.reset(new dxrt::InferenceEngine(model_path, option));
+
+            auto& config = dxrt::Configuration::GetInstance();
+            config.SetEnable(dxrt::Configuration::ITEM::NFH_ACCELERATION, true);
+            config.SetEnable(dxrt::Configuration::ITEM::CPU_OP_ACCELERATION, true);
+
+	    engine_.reset(new dxrt::InferenceEngine(model_path, option));
         }
         catch (const std::exception &e)
         {
@@ -621,6 +702,20 @@ public:
         pending_results_.erase(it);
         ++next_display_id_;
         return true;
+    }
+
+    bool is_drained() const
+    {
+        {
+            std::lock_guard<std::mutex> lock(slots_mutex_);
+            if (in_flight_ != 0)
+            {
+                return false;
+            }
+        }
+
+        std::lock_guard<std::mutex> lock(results_mutex_);
+        return pending_results_.empty();
     }
 
     double completion_fps()
@@ -951,23 +1046,54 @@ int main(int argc, char **argv)
             return 1;
         }
 
-        cv::VideoCapture cap(options.camera_index, camera_backend_api(options.camera_backend));
-        if (options.camera_buffer_size > 0)
+        cv::VideoCapture cap;
+        if (use_video_file_input(options))
         {
-            cap.set(cv::CAP_PROP_BUFFERSIZE, options.camera_buffer_size);
+            if (!file_exists(options.input_path))
+            {
+                std::cerr << "Error: video file not found: " << options.input_path << std::endl;
+                return 1;
+            }
+            cap.open(options.input_path, cv::CAP_ANY);
         }
-        if (!options.camera_fourcc.empty())
+        else
         {
-            cap.set(cv::CAP_PROP_FOURCC, fourcc_from_string(options.camera_fourcc));
+            cap.open(options.camera_index, camera_backend_api(options.camera_backend));
+            if (options.camera_buffer_size > 0)
+            {
+                cap.set(cv::CAP_PROP_BUFFERSIZE, options.camera_buffer_size);
+            }
+            if (!options.camera_fourcc.empty())
+            {
+                cap.set(cv::CAP_PROP_FOURCC, fourcc_from_string(options.camera_fourcc));
+            }
+            cap.set(cv::CAP_PROP_FRAME_WIDTH, options.width);
+            cap.set(cv::CAP_PROP_FRAME_HEIGHT, options.height);
+            cap.set(cv::CAP_PROP_FPS, options.fps);
         }
-        cap.set(cv::CAP_PROP_FRAME_WIDTH, options.width);
-        cap.set(cv::CAP_PROP_FRAME_HEIGHT, options.height);
-        cap.set(cv::CAP_PROP_FPS, options.fps);
 
         if (!cap.isOpened())
         {
-            std::cerr << "Error: Could not open camera index " << options.camera_index << std::endl;
+            if (use_video_file_input(options))
+            {
+                std::cerr << "Error: Could not open video file: " << options.input_path << std::endl;
+            }
+            else
+            {
+                std::cerr << "Error: Could not open camera index " << options.camera_index << std::endl;
+            }
             return 1;
+        }
+
+        const bool video_input = use_video_file_input(options);
+        double video_fps = 0.0;
+        if (video_input)
+        {
+            video_fps = cap.get(cv::CAP_PROP_FPS);
+            if (!(video_fps > 0.0) || !std::isfinite(video_fps))
+            {
+                video_fps = static_cast<double>(kDefaultCameraFps);
+            }
         }
 
         AsyncDepthAnything async_depth(options.model_path, options.queue_size);
@@ -975,14 +1101,28 @@ int main(int argc, char **argv)
         const std::pair<int, int> screen = screen_size();
         double depth_fps_display = 0.0;
         auto last_fps_update = std::chrono::steady_clock::now();
+        std::optional<OverlaySprite> fps_overlay_sprite;
+        std::optional<OverlaySprite> model_overlay_sprite;
+        if (!options.no_ui)
+        {
+            model_overlay_sprite = make_model_overlay_sprite(options.model_path);
+        }
 
         std::cout << "Start Async Processing. Press 'q' or ESC to exit." << std::endl;
+        if (options.no_ui)
+        {
+            std::cout << "UI disabled. Use Ctrl+C to stop." << std::endl;
+        }
 
-        cv::namedWindow(kWindowName, cv::WINDOW_NORMAL);
+        if (!options.no_ui)
+        {
+            cv::namedWindow(kWindowName, cv::WINDOW_NORMAL);
+        }
 
         bool window_fullscreen = false;
         bool launcher_ready = false;
-        std::atomic<bool> stop_capture(false);
+        std::atomic<bool> stop_requested(false);
+        std::atomic<bool> source_finished(false);
         std::exception_ptr capture_error = nullptr;
         std::exception_ptr inference_error = nullptr;
 
@@ -990,19 +1130,37 @@ int main(int argc, char **argv)
             try
             {
                 uint64_t seq = 0;
-                while (!stop_capture.load(std::memory_order_relaxed))
+                auto next_video_frame_time = std::chrono::steady_clock::now();
+                const auto video_frame_interval = video_input
+                    ? std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                          std::chrono::duration<double>(1.0 / video_fps))
+                    : std::chrono::steady_clock::duration::zero();
+
+                while (!stop_requested.load(std::memory_order_relaxed))
                 {
                     cv::Mat frame;
                     if (!cap.grab())
                     {
-                        stop_capture.store(true, std::memory_order_relaxed);
+                        if (video_input)
+                        {
+                            cap.set(cv::CAP_PROP_POS_FRAMES, 0.0);
+                            next_video_frame_time = std::chrono::steady_clock::now();
+                            continue;
+                        }
+                        source_finished.store(true, std::memory_order_relaxed);
                         g_camera_cv.notify_all();
                         break;
                     }
 
                     if (!cap.retrieve(frame))
                     {
-                        stop_capture.store(true, std::memory_order_relaxed);
+                        if (video_input)
+                        {
+                            cap.set(cv::CAP_PROP_POS_FRAMES, 0.0);
+                            next_video_frame_time = std::chrono::steady_clock::now();
+                            continue;
+                        }
+                        source_finished.store(true, std::memory_order_relaxed);
                         g_camera_cv.notify_all();
                         break;
                     }
@@ -1013,12 +1171,19 @@ int main(int argc, char **argv)
                         g_latest_camera.seq = ++seq;
                     }
                     g_camera_cv.notify_one();
+
+                    if (video_input)
+                    {
+                        next_video_frame_time += video_frame_interval;
+                        std::this_thread::sleep_until(next_video_frame_time);
+                    }
                 }
             }
             catch (...)
             {
                 capture_error = std::current_exception();
-                stop_capture.store(true, std::memory_order_relaxed);
+                stop_requested.store(true, std::memory_order_relaxed);
+                source_finished.store(true, std::memory_order_relaxed);
                 g_camera_cv.notify_all();
             }
         });
@@ -1033,10 +1198,13 @@ int main(int argc, char **argv)
                     {
                         std::unique_lock<std::mutex> lock(g_camera_mutex);
                         g_camera_cv.wait(lock, [&]() {
-                            return stop_capture.load(std::memory_order_relaxed) ||
+                            return stop_requested.load(std::memory_order_relaxed) ||
+                                   source_finished.load(std::memory_order_relaxed) ||
                                    g_latest_camera.seq != last_seq;
                         });
-                        if (stop_capture.load(std::memory_order_relaxed) && g_latest_camera.seq == last_seq)
+                        if ((stop_requested.load(std::memory_order_relaxed) ||
+                             source_finished.load(std::memory_order_relaxed)) &&
+                            g_latest_camera.seq == last_seq)
                         {
                             break;
                         }
@@ -1053,21 +1221,34 @@ int main(int argc, char **argv)
             catch (...)
             {
                 inference_error = std::current_exception();
-                stop_capture.store(true, std::memory_order_relaxed);
+                stop_requested.store(true, std::memory_order_relaxed);
+                source_finished.store(true, std::memory_order_relaxed);
                 g_camera_cv.notify_all();
             }
         });
 
-        while (!stop_capture.load(std::memory_order_relaxed))
+        while (true)
         {
+            if (stop_requested.load(std::memory_order_relaxed))
+            {
+                break;
+            }
+            if (source_finished.load(std::memory_order_relaxed) && async_depth.is_drained())
+            {
+                break;
+            }
+
             const auto now = std::chrono::steady_clock::now();
             const double since_update = std::chrono::duration<double>(now - last_fps_update).count();
             if (since_update >= kFpsUpdateIntervalSec)
             {
                 depth_fps_display = async_depth.completion_fps();
                 last_fps_update = now;
+                if (!options.no_ui)
+                {
+                    fps_overlay_sprite = make_fps_overlay_sprite(depth_fps_display);
+                }
             }
-
             DepthResult result;
             if (async_depth.pop_next_result(&result))
             {
@@ -1086,37 +1267,53 @@ int main(int argc, char **argv)
                         display_content = depth_colored;
                     }
 
-                    cv::Mat frame_show = letterbox_to_screen(display_content, screen.first, screen.second);
-                    draw_fps_overlay(frame_show, depth_fps_display);
-                    draw_model_name_overlay(frame_show, options.model_path);
-
-                    cv::imshow(kWindowName, frame_show);
-                    set_fps_window_title(depth_fps_display);
-
-                    if (!window_fullscreen)
+                    if (!options.no_ui)
                     {
-                        cv::setWindowProperty(kWindowName, cv::WND_PROP_FULLSCREEN, cv::WINDOW_FULLSCREEN);
-                        window_fullscreen = true;
-                    }
-                    if (!launcher_ready)
-                    {
-                        notify_launcher_ready();
-                        launcher_ready = true;
+                        cv::Mat frame_show = letterbox_to_screen(display_content, screen.first, screen.second);
+
+                        if (fps_overlay_sprite.has_value())
+                        {
+                            place_fps_overlay_sprite(&fps_overlay_sprite.value(), frame_show.size());
+                            blend_overlay_sprite(frame_show, fps_overlay_sprite.value());
+                        }
+                        if (model_overlay_sprite.has_value())
+                        {
+                            place_model_overlay_sprite(&model_overlay_sprite.value(), frame_show.size());
+                            blend_overlay_sprite(frame_show, model_overlay_sprite.value());
+                        }
+
+                        cv::imshow(kWindowName, frame_show);
+                        set_fps_window_title(depth_fps_display);
+
+                        if (!window_fullscreen)
+                        {
+                            cv::setWindowProperty(kWindowName, cv::WND_PROP_FULLSCREEN, cv::WINDOW_FULLSCREEN);
+                            window_fullscreen = true;
+                        }
+                        if (!launcher_ready)
+                        {
+                            notify_launcher_ready();
+                            launcher_ready = true;
+                        }
                     }
                 }
             }
 
-            const int key = cv::waitKey(1) & 0xff;
-            if (key == 'q' || key == 27)
+            if (!options.no_ui)
             {
-                cv::waitKey(500);
-                stop_capture.store(true, std::memory_order_relaxed);
-                g_camera_cv.notify_all();
-                break;
+                const int key = cv::waitKey(1) & 0xff;
+                if (key == 'q' || key == 27)
+                {
+                    cv::waitKey(500);
+                    stop_requested.store(true, std::memory_order_relaxed);
+                    g_camera_cv.notify_all();
+                    break;
+                }
             }
         }
 
-        stop_capture.store(true, std::memory_order_relaxed);
+        stop_requested.store(true, std::memory_order_relaxed);
+        source_finished.store(true, std::memory_order_relaxed);
         g_camera_cv.notify_all();
         if (capture_thread.joinable())
         {
@@ -1139,7 +1336,10 @@ int main(int argc, char **argv)
         }
 
         cap.release();
-        cv::destroyAllWindows();
+        if (!options.no_ui)
+        {
+            cv::destroyAllWindows();
+        }
         std::cout << "\nFinished." << std::endl;
     }
     catch (const std::exception &e)
