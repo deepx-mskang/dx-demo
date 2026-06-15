@@ -3,6 +3,7 @@
 #include <opencv2/opencv.hpp>
 
 #include <QApplication>
+#include <QCheckBox>
 #include <QCloseEvent>
 #include <QFile>
 #include <QFont>
@@ -588,8 +589,15 @@ class CameraThread : public QThread {
     Q_OBJECT
 
 public:
-    explicit CameraThread(CameraConfig cameraConfig, QString videoPath = {}, QObject* parent = nullptr)
-        : QThread(parent), videoPath_(std::move(videoPath)), cameraConfig_(cameraConfig)
+    explicit CameraThread(
+        CameraConfig cameraConfig,
+        QString videoPath = {},
+        bool sharpnessEnabled = false,
+        QObject* parent = nullptr)
+        : QThread(parent),
+          videoPath_(std::move(videoPath)),
+          cameraConfig_(cameraConfig),
+          sharpnessEnabled_(sharpnessEnabled)
     {
     }
 
@@ -604,6 +612,11 @@ public:
         std::lock_guard<std::mutex> lock(focusMutex_);
         pendingFocus_ = std::max(0, std::min(100, value));
         hasPendingFocus_ = true;
+    }
+
+    void setSharpnessEnabled(bool enabled)
+    {
+        sharpnessEnabled_.store(enabled);
     }
 
 signals:
@@ -677,7 +690,9 @@ protected:
                 frame = centerCropToSize(frame, 640);
             }
 
-            cv::filter2D(frame, frame, -1, sharpenKernel);
+            if (sharpnessEnabled_.load()) {
+                cv::filter2D(frame, frame, -1, sharpenKernel);
+            }
             const quint64 frameId = nextFrameId++;
             emit frameReady(frameId, frame.clone());
             emit ocrFrameReady(frameId, frame.clone());
@@ -717,6 +732,7 @@ private:
     QString videoPath_;
     CameraConfig cameraConfig_;
     std::atomic_bool running_{false};
+    std::atomic_bool sharpnessEnabled_{false};
     std::mutex focusMutex_;
     int pendingFocus_ = 0;
     bool hasPendingFocus_ = false;
@@ -893,6 +909,7 @@ public:
         std::string language,
         CameraConfig cameraConfig,
         QString videoPath,
+        bool sharpnessEnabled,
         QWidget* parent = nullptr)
         : QWidget(parent),
           engine_(std::move(engine)),
@@ -900,6 +917,7 @@ public:
           language_(std::move(language)),
           cameraConfig_(cameraConfig),
           videoPath_(std::move(videoPath)),
+          sharpnessEnabled_(sharpnessEnabled),
           fontPath_(fontPathForLanguage(rootDir_, language_))
     {
         setWindowTitle("DEEPX M1 Live OCR Demo");
@@ -916,7 +934,7 @@ public:
         lastResult_.reset();
         lastRightImage_.release();
         rightTextLayoutCache_.clear();
-        cameraThread_ = new CameraThread(cameraConfig_, videoPath_, this);
+        cameraThread_ = new CameraThread(cameraConfig_, videoPath_, sharpnessEnabled_, this);
         ocrThread_ = new OcrProcessThread(engine_, this);
 
         connect(cameraThread_, &CameraThread::frameReady, this, &ImageViewerApp::onCameraFrameDisplay);
@@ -1015,6 +1033,14 @@ private slots:
     {
         if (cameraThread_ && cameraActive_ && videoPath_.isEmpty()) {
             cameraThread_->enqueueFocusUi(value);
+        }
+    }
+
+    void onSharpnessToggled(bool enabled)
+    {
+        sharpnessEnabled_ = enabled;
+        if (cameraThread_) {
+            cameraThread_->setSharpnessEnabled(enabled);
         }
     }
 
@@ -1124,9 +1150,36 @@ private:
         focusLayout->setContentsMargins(0, 0, 0, 0);
         auto* focusLabel = new QLabel("Camera Focus Tuning");
         focusLabel->setStyleSheet(QString("color:%1; font-size:12px; border:none; background:transparent;").arg(kTextDim));
+        sharpnessCheckBox_ = new QCheckBox("Sharpness");
+        sharpnessCheckBox_->setChecked(sharpnessEnabled_);
+        sharpnessCheckBox_->setToolTip("Enable image sharpening for preview and OCR input");
+        sharpnessCheckBox_->setStyleSheet(QString(R"(
+            QCheckBox {
+                color: %1;
+                font-size: 12px;
+                border: none;
+                background: transparent;
+                spacing: 6px;
+            }
+            QCheckBox::indicator {
+                width: 14px;
+                height: 14px;
+            }
+            QCheckBox::indicator:unchecked {
+                border: 1px solid %2;
+                background: %3;
+                border-radius: 3px;
+            }
+            QCheckBox::indicator:checked {
+                border: 1px solid %4;
+                background: %5;
+                border-radius: 3px;
+            }
+        )").arg(kTextDim, kBorder, kCard, kAccent, kAccent));
+        connect(sharpnessCheckBox_, &QCheckBox::toggled, this, &ImageViewerApp::onSharpnessToggled);
         focusSlider_ = new QSlider(Qt::Horizontal);
         focusSlider_->setRange(0, 100);
-        focusSlider_->setFixedWidth(450);
+        focusSlider_->setFixedWidth(330);
         focusSlider_->setEnabled(false);
         focusSlider_->setStyleSheet(QString(R"(
             QSlider::groove:horizontal { height: 6px; background: %1; border-radius: 3px; }
@@ -1135,6 +1188,7 @@ private:
         )").arg(kBorder, kAccent, kAccentDark));
         connect(focusSlider_, &QSlider::valueChanged, this, &ImageViewerApp::onFocusChanged);
         focusLayout->addWidget(focusLabel);
+        focusLayout->addWidget(sharpnessCheckBox_);
         focusLayout->addStretch(1);
         focusLayout->addWidget(focusSlider_);
         leftInfoLayout->addWidget(focusRow);
@@ -1252,12 +1306,14 @@ private:
     std::string language_;
     CameraConfig cameraConfig_;
     QString videoPath_;
+    bool sharpnessEnabled_ = false;
     QString fontPath_;
 
     QLabel* leftImageLabel_ = nullptr;
     QLabel* rightImageLabel_ = nullptr;
     QTextEdit* infoText_ = nullptr;
     PerformanceInfoWidget* performanceWidget_ = nullptr;
+    QCheckBox* sharpnessCheckBox_ = nullptr;
     QSlider* focusSlider_ = nullptr;
 
     CameraThread* cameraThread_ = nullptr;
@@ -1279,6 +1335,7 @@ struct Args {
     std::string modelProfile = "mobile";
     CameraConfig camera;
     bool enableUvdoc = false;
+    bool enableSharpness = false;
     int recAsyncQueueSize = camocr::kRecAsyncQueueDefault;
 };
 
@@ -1333,7 +1390,7 @@ void printUsage()
         << "Usage: cam_ocr_demo [--video PATH] [--camera N] [--resolution WIDTHxHEIGHT]\n"
         << "                    [--width W --height H] [--fps FPS]\n"
         << "                    [--model mobile|server|hybrid] [--language ch|korean|german]\n"
-        << "                    [--rec-queue-size N] [--enable-uvdoc]\n";
+        << "                    [--rec-queue-size N] [--enable-uvdoc] [--enable-sharpness]\n";
 }
 
 Args parseArgs(const QStringList& args)
@@ -1365,6 +1422,8 @@ Args parseArgs(const QStringList& args)
             }
         } else if (arg == "--enable-uvdoc") {
             parsed.enableUvdoc = true;
+        } else if (arg == "--enable-sharpness" || arg == "--sharpness") {
+            parsed.enableSharpness = true;
         } else if (arg == "--hide-preview") {
             continue;
         } else if (arg == "-h" || arg == "--help") {
@@ -1423,7 +1482,7 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    ImageViewerApp viewer(engine, root, args.language, args.camera, args.videoPath);
+    ImageViewerApp viewer(engine, root, args.language, args.camera, args.videoPath, args.enableSharpness);
     notifyLauncherReady();
     viewer.showFullScreen();
     QTimer::singleShot(0, &viewer, &ImageViewerApp::startCamera);
