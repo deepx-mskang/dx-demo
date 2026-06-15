@@ -20,7 +20,7 @@ namespace {
 constexpr double kDetThresh = 0.3;
 constexpr double kDetBoxThresh = 0.6;
 constexpr double kDetUnclipRatio = 1.5;
-constexpr int kDetMaxCandidates = 1500;
+constexpr int kDetMaxCandidates = 50;
 constexpr double kClsThresh = 0.9;
 constexpr double kRecDropScore = 0.3;
 constexpr int kMaxOcrBoxes = 50;
@@ -158,7 +158,7 @@ std::string trimLine(std::string line)
 
 PaddleOcrEngine::PaddleOcrEngine(const EngineOptions& options)
     : rootDir_(resolveRoot(options.rootDir)),
-      modelsBaseDir_(options.modelsBaseDir.empty() ? resolveRoot(options.rootDir) / "cpp" / "assets"
+      modelsBaseDir_(options.modelsBaseDir.empty() ? resolveRoot(options.rootDir) / "assets"
                                                    : fs::absolute(options.modelsBaseDir)),
       language_(options.language),
       modelProfile_(options.modelProfile),

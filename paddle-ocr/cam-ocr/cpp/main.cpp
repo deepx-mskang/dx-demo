@@ -64,6 +64,72 @@ struct CameraConfig {
     double fps = 15.0;
 };
 
+enum class SharpnessMode {
+    Off,
+    Soft,
+    Medium,
+    Strong,
+};
+
+const char* sharpnessModeName(SharpnessMode mode)
+{
+    switch (mode) {
+    case SharpnessMode::Off:
+        return "off";
+    case SharpnessMode::Soft:
+        return "soft";
+    case SharpnessMode::Medium:
+        return "medium";
+    case SharpnessMode::Strong:
+        return "strong";
+    }
+    return "off";
+}
+
+cv::Mat applyOcrSharpness(const cv::Mat& frame, SharpnessMode mode)
+{
+    if (frame.empty() || mode == SharpnessMode::Off) {
+        return frame;
+    }
+
+    struct UnsharpParams {
+        double srcWeight;
+        double blurWeight;
+        double sigma;
+    };
+
+    UnsharpParams params{};
+    switch (mode) {
+    case SharpnessMode::Soft:
+        params = {1.25, -0.25, 0.8};
+        break;
+    case SharpnessMode::Medium:
+        params = {1.5, -0.5, 1.0};
+        break;
+    case SharpnessMode::Strong:
+        params = {1.8, -0.8, 1.2};
+        break;
+    case SharpnessMode::Off:
+        return frame;
+    }
+
+    cv::Mat lab;
+    cv::cvtColor(frame, lab, cv::COLOR_BGR2Lab);
+
+    std::vector<cv::Mat> channels;
+    cv::split(lab, channels);
+
+    cv::Mat blurredL;
+    cv::GaussianBlur(channels[0], blurredL, cv::Size(0, 0), params.sigma);
+    cv::addWeighted(channels[0], params.srcWeight, blurredL, params.blurWeight, 0.0, channels[0]);
+
+    cv::merge(channels, lab);
+
+    cv::Mat sharpened;
+    cv::cvtColor(lab, sharpened, cv::COLOR_Lab2BGR);
+    return sharpened;
+}
+
 cv::Mat centerCropToSize(const cv::Mat& frame, int cropSize)
 {
     if (frame.empty()) {
@@ -592,11 +658,13 @@ public:
     explicit CameraThread(
         CameraConfig cameraConfig,
         QString videoPath = {},
+        SharpnessMode sharpnessMode = SharpnessMode::Off,
         bool sharpnessEnabled = false,
         QObject* parent = nullptr)
         : QThread(parent),
           videoPath_(std::move(videoPath)),
           cameraConfig_(cameraConfig),
+          sharpnessMode_(sharpnessMode),
           sharpnessEnabled_(sharpnessEnabled)
     {
     }
@@ -617,6 +685,11 @@ public:
     void setSharpnessEnabled(bool enabled)
     {
         sharpnessEnabled_.store(enabled);
+    }
+
+    void setSharpnessMode(SharpnessMode mode)
+    {
+        sharpnessMode_.store(mode);
     }
 
 signals:
@@ -671,7 +744,6 @@ protected:
 
         running_.store(true);
         quint64 nextFrameId = 1;
-        const cv::Mat sharpenKernel = (cv::Mat_<float>(3, 3) << -1, -1, -1, -1, 9, -1, -1, -1, -1);
 
         while (running_.load()) {
             if (!useVideo) {
@@ -691,7 +763,7 @@ protected:
             }
 
             if (sharpnessEnabled_.load()) {
-                cv::filter2D(frame, frame, -1, sharpenKernel);
+                frame = applyOcrSharpness(frame, sharpnessMode_.load());
             }
             const quint64 frameId = nextFrameId++;
             emit frameReady(frameId, frame.clone());
@@ -732,6 +804,7 @@ private:
     QString videoPath_;
     CameraConfig cameraConfig_;
     std::atomic_bool running_{false};
+    std::atomic<SharpnessMode> sharpnessMode_{SharpnessMode::Off};
     std::atomic_bool sharpnessEnabled_{false};
     std::mutex focusMutex_;
     int pendingFocus_ = 0;
@@ -909,6 +982,7 @@ public:
         std::string language,
         CameraConfig cameraConfig,
         QString videoPath,
+        SharpnessMode sharpnessMode,
         bool sharpnessEnabled,
         QWidget* parent = nullptr)
         : QWidget(parent),
@@ -917,6 +991,7 @@ public:
           language_(std::move(language)),
           cameraConfig_(cameraConfig),
           videoPath_(std::move(videoPath)),
+          sharpnessMode_(sharpnessMode),
           sharpnessEnabled_(sharpnessEnabled),
           fontPath_(fontPathForLanguage(rootDir_, language_))
     {
@@ -934,7 +1009,7 @@ public:
         lastResult_.reset();
         lastRightImage_.release();
         rightTextLayoutCache_.clear();
-        cameraThread_ = new CameraThread(cameraConfig_, videoPath_, sharpnessEnabled_, this);
+        cameraThread_ = new CameraThread(cameraConfig_, videoPath_, sharpnessMode_, sharpnessEnabled_, this);
         ocrThread_ = new OcrProcessThread(engine_, this);
 
         connect(cameraThread_, &CameraThread::frameReady, this, &ImageViewerApp::onCameraFrameDisplay);
@@ -1152,7 +1227,9 @@ private:
         focusLabel->setStyleSheet(QString("color:%1; font-size:12px; border:none; background:transparent;").arg(kTextDim));
         sharpnessCheckBox_ = new QCheckBox("Sharpness");
         sharpnessCheckBox_->setChecked(sharpnessEnabled_);
-        sharpnessCheckBox_->setToolTip("Enable image sharpening for preview and OCR input");
+        sharpnessCheckBox_->setToolTip(
+            QString("Enable OCR sharpening for preview and OCR input (mode: %1)")
+                .arg(sharpnessModeName(sharpnessMode_)));
         sharpnessCheckBox_->setStyleSheet(QString(R"(
             QCheckBox {
                 color: %1;
@@ -1306,6 +1383,7 @@ private:
     std::string language_;
     CameraConfig cameraConfig_;
     QString videoPath_;
+    SharpnessMode sharpnessMode_ = SharpnessMode::Off;
     bool sharpnessEnabled_ = false;
     QString fontPath_;
 
@@ -1335,6 +1413,7 @@ struct Args {
     std::string modelProfile = "mobile";
     CameraConfig camera;
     bool enableUvdoc = false;
+    SharpnessMode sharpnessMode = SharpnessMode::Medium;
     bool enableSharpness = false;
     int recAsyncQueueSize = camocr::kRecAsyncQueueDefault;
 };
@@ -1372,6 +1451,27 @@ double parsePositiveDouble(const QString& value, const char* optionName)
     return parsed;
 }
 
+SharpnessMode parseSharpnessMode(const QString& value, const char* optionName)
+{
+    const QString normalized = value.trimmed().toLower();
+    if (normalized == "off" || normalized == "none" || normalized == "0") {
+        return SharpnessMode::Off;
+    }
+    if (normalized == "soft" || normalized == "low" || normalized == "1") {
+        return SharpnessMode::Soft;
+    }
+    if (normalized == "medium" || normalized == "med" || normalized == "2") {
+        return SharpnessMode::Medium;
+    }
+    if (normalized == "strong" || normalized == "high" || normalized == "3") {
+        return SharpnessMode::Strong;
+    }
+
+    std::cerr << "Invalid " << optionName << ": " << value.toStdString()
+              << " (expected off|soft|medium|strong)" << std::endl;
+    std::exit(2);
+}
+
 void parseResolution(const QString& value, CameraConfig* camera)
 {
     const QString normalized = value.toLower();
@@ -1390,7 +1490,10 @@ void printUsage()
         << "Usage: cam_ocr_demo [--video PATH] [--camera N] [--resolution WIDTHxHEIGHT]\n"
         << "                    [--width W --height H] [--fps FPS]\n"
         << "                    [--model mobile|server|hybrid] [--language ch|korean|german]\n"
-        << "                    [--rec-queue-size N] [--enable-uvdoc] [--enable-sharpness]\n";
+        << "                    [--rec-queue-size N] [--enable-uvdoc]\n"
+        << "                    [--enable-sharpness] [--sharpness off|soft|medium|strong]\n"
+        << "Defaults: sharpness is off. GUI checkbox toggles the selected sharpness mode,\n"
+        << "and `--enable-sharpness` uses the default `medium` mode.\n";
 }
 
 Args parseArgs(const QStringList& args)
@@ -1422,8 +1525,15 @@ Args parseArgs(const QStringList& args)
             }
         } else if (arg == "--enable-uvdoc") {
             parsed.enableUvdoc = true;
-        } else if (arg == "--enable-sharpness" || arg == "--sharpness") {
+        } else if (arg == "--enable-sharpness") {
             parsed.enableSharpness = true;
+        } else if (arg == "--sharpness") {
+            if (i + 1 < args.size() && !args[i + 1].startsWith('-')) {
+                parsed.sharpnessMode = parseSharpnessMode(args[++i], "--sharpness");
+                parsed.enableSharpness = parsed.sharpnessMode != SharpnessMode::Off;
+            } else {
+                parsed.enableSharpness = true;
+            }
         } else if (arg == "--hide-preview") {
             continue;
         } else if (arg == "-h" || arg == "--help") {
@@ -1473,6 +1583,8 @@ int main(int argc, char** argv)
     std::cout << "Model directory: " << defaultModelsDir(root, args.modelProfile).string() << std::endl;
     options.enableUvdoc = args.enableUvdoc;
     options.recAsyncQueueSize = args.recAsyncQueueSize;
+    std::cout << "Sharpness mode: " << sharpnessModeName(args.sharpnessMode)
+              << ", enabled: " << (args.enableSharpness ? "yes" : "no") << std::endl;
 
     std::shared_ptr<camocr::PaddleOcrEngine> engine;
     try {
@@ -1482,7 +1594,8 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    ImageViewerApp viewer(engine, root, args.language, args.camera, args.videoPath, args.enableSharpness);
+    ImageViewerApp viewer(
+        engine, root, args.language, args.camera, args.videoPath, args.sharpnessMode, args.enableSharpness);
     notifyLauncherReady();
     viewer.showFullScreen();
     QTimer::singleShot(0, &viewer, &ImageViewerApp::startCamera);
