@@ -985,6 +985,7 @@ public:
         QString videoPath,
         SharpnessMode sharpnessMode,
         bool sharpnessEnabled,
+        bool showExitButton,
         QWidget* parent = nullptr)
         : QWidget(parent),
           engine_(std::move(engine)),
@@ -994,6 +995,7 @@ public:
           videoPath_(std::move(videoPath)),
           sharpnessMode_(sharpnessMode),
           sharpnessEnabled_(sharpnessEnabled),
+          showExitButton_(showExitButton),
           fontPath_(fontPathForLanguage(rootDir_, language_))
     {
         setWindowTitle("DEEPX M1 Live OCR Demo");
@@ -1140,10 +1142,12 @@ private:
         titleLayout->setContentsMargins(16, 0, 16, 0);
         titleLayout->setSpacing(8);
 
-        auto* titleLeftPad = new QWidget();
-        titleLeftPad->setFixedSize(32, 28);
-        titleLeftPad->setStyleSheet("border:none; background:transparent;");
-        titleLayout->addWidget(titleLeftPad);
+        if (showExitButton_) {
+            auto* titleLeftPad = new QWidget();
+            titleLeftPad->setFixedSize(32, 28);
+            titleLeftPad->setStyleSheet("border:none; background:transparent;");
+            titleLayout->addWidget(titleLeftPad);
+        }
 
         auto* appTitle = new QLabel("DEEPX M1 Live OCR Demo");
         appTitle->setAlignment(Qt::AlignCenter);
@@ -1160,31 +1164,33 @@ private:
         )"));
         titleLayout->addWidget(appTitle, 1);
 
-        auto* exitButton = new QPushButton("X");
-        exitButton->setFixedSize(32, 28);
-        exitButton->setFocusPolicy(Qt::NoFocus);
-        exitButton->setToolTip("Exit");
-        exitButton->setStyleSheet(QString(R"(
-            QPushButton {
-                color: %1;
-                background-color: %2;
-                border: 1px solid %3;
-                border-radius: 6px;
-                font-size: 13px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #3a3a3d;
-                color: #ffffff;
-            }
-            QPushButton:pressed {
-                background-color: %4;
-            }
-        )").arg(kText, kCard, kBorder, kAccentDark));
-        connect(exitButton, &QPushButton::clicked, this, [this] {
-            close();
-        });
-        titleLayout->addWidget(exitButton);
+        if (showExitButton_) {
+            auto* exitButton = new QPushButton("X");
+            exitButton->setFixedSize(32, 28);
+            exitButton->setFocusPolicy(Qt::NoFocus);
+            exitButton->setToolTip("Exit");
+            exitButton->setStyleSheet(QString(R"(
+                QPushButton {
+                    color: %1;
+                    background-color: %2;
+                    border: 1px solid %3;
+                    border-radius: 6px;
+                    font-size: 13px;
+                    font-weight: bold;
+                }
+                QPushButton:hover {
+                    background-color: #3a3a3d;
+                    color: #ffffff;
+                }
+                QPushButton:pressed {
+                    background-color: %4;
+                }
+            )").arg(kText, kCard, kBorder, kAccentDark));
+            connect(exitButton, &QPushButton::clicked, this, [this] {
+                close();
+            });
+            titleLayout->addWidget(exitButton);
+        }
 
         rootLayout->addWidget(titleBar);
 
@@ -1386,6 +1392,7 @@ private:
     QString videoPath_;
     SharpnessMode sharpnessMode_ = SharpnessMode::Off;
     bool sharpnessEnabled_ = false;
+    bool showExitButton_ = false;
     QString fontPath_;
 
     QLabel* leftImageLabel_ = nullptr;
@@ -1416,6 +1423,7 @@ struct Args {
     bool enableUvdoc = false;
     SharpnessMode sharpnessMode = SharpnessMode::Medium;
     bool enableSharpness = false;
+    bool showExitButton = false;
     int recAsyncQueueSize = camocr::kRecAsyncQueueDefault;
 };
 
@@ -1493,6 +1501,7 @@ void printUsage()
         << "                    [--model mobile|server|hybrid] [--language ch|korean|german]\n"
         << "                    [--rec-queue-size N] [--enable-uvdoc]\n"
         << "                    [--enable-sharpness] [--sharpness off|soft|medium|strong]\n"
+        << "                    [--exit-btn]\n"
         << "Defaults: sharpness is off. GUI checkbox toggles the selected sharpness mode,\n"
         << "and `--enable-sharpness` uses the default `medium` mode.\n";
 }
@@ -1537,6 +1546,8 @@ Args parseArgs(const QStringList& args)
             }
         } else if (arg == "--hide-preview") {
             continue;
+        } else if (arg == "--exit-btn") {
+            parsed.showExitButton = true;
         } else if (arg == "-h" || arg == "--help") {
             printUsage();
             std::exit(0);
@@ -1596,7 +1607,14 @@ int main(int argc, char** argv)
     }
 
     ImageViewerApp viewer(
-        engine, root, args.language, args.camera, args.videoPath, args.sharpnessMode, args.enableSharpness);
+        engine,
+        root,
+        args.language,
+        args.camera,
+        args.videoPath,
+        args.sharpnessMode,
+        args.enableSharpness,
+        args.showExitButton);
     notifyLauncherReady();
     viewer.showFullScreen();
     QTimer::singleShot(0, &viewer, &ImageViewerApp::startCamera);

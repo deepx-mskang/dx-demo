@@ -27,7 +27,7 @@ function install_dep() {
     cmake_version_required=3.14
     install_cmake=false
 
-    local dep_pkgs=(build-essential make zlib1g-dev libcurl4-openssl-dev wget tar zip cmake)
+    local dep_pkgs=(build-essential make zlib1g-dev libcurl4-openssl-dev wget tar zip cmake qtbase5-dev)
     if ! pkgs_installed "${dep_pkgs[@]}"; then
         echo " Install dependence package tools "
         sudo apt-get update

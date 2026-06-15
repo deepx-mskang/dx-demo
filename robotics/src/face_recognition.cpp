@@ -142,87 +142,29 @@ std::vector<FaceData> get_gallary(std::string dir, Ssd *detector, dxrt::Inferenc
 cv::Mat make_gallary_view(const std::vector<FaceData> &gallary, bool empty_db)
 {
     std::vector<cv::Mat> gallary_images;
-    gallary_images.reserve(gallary.size());
-    for (size_t i = 0; i < gallary.size(); i++)
+    const size_t first_visible_index = empty_db ? 1U : 0U;
+    if (gallary.size() <= first_visible_index)
+    {
+        return {};
+    }
+
+    gallary_images.reserve(gallary.size() - first_visible_index);
+    for (size_t i = first_visible_index; i < gallary.size(); i++)
     {
         auto face_image = gallary[i].image.clone();
-        std::string id_label;
-        if (empty_db && i == 0)
+        if (face_image.empty())
         {
-            if (gallary.size() == 1)
-            {
-                id_label = "No faces yet";
-            }
-            else
-            {
-                id_label = "D: remove last";
-            }
+            continue;
         }
-        else
-        {
-            id_label = "ID: " + std::to_string(i);
-        }
-        int baseline = 0;
-        double font_scale = 0.5;
-        const int thickness = 1;
-        cv::Size ts =
-            cv::getTextSize(id_label, cv::FONT_HERSHEY_SIMPLEX, font_scale, thickness, &baseline);
-        while (ts.width > face_image.cols - 8 && font_scale > 0.3)
-        {
-            font_scale -= 0.05;
-            ts = cv::getTextSize(id_label, cv::FONT_HERSHEY_SIMPLEX, font_scale, thickness, &baseline);
-        }
-        const int x = 4;
-        const int y = ts.height + 4;
-        cv::putText(face_image, id_label, cv::Point(x, y), cv::FONT_HERSHEY_SIMPLEX, font_scale,
-                    cv::Scalar(0, 255, 255), thickness, cv::LINE_AA);
         gallary_images.emplace_back(std::move(face_image));
     }
+
     cv::Mat gallary_view;
     if (gallary_images.empty())
     {
         return gallary_view;
     }
     cv::hconcat(gallary_images, gallary_view);
-
-    if (empty_db)
-    {
-        const int col0_w = gallary[0].image.cols;
-        const std::string line1 = "Press A";
-        const std::string line2 = "to register ID";
-        const int line_gap = 5;
-        double base_scale = 0.52;
-        const int thickness = 1;
-        int baseline1 = 0;
-        int baseline2 = 0;
-        double font_scale1 = base_scale * 1.1;
-        double font_scale2 = base_scale * 0.9;
-        cv::Size sz1 = cv::getTextSize(line1, cv::FONT_HERSHEY_SIMPLEX, font_scale1, thickness, &baseline1);
-        cv::Size sz2 = cv::getTextSize(line2, cv::FONT_HERSHEY_SIMPLEX, font_scale2, thickness, &baseline2);
-        int max_w = std::max(sz1.width, sz2.width);
-        while (max_w > col0_w - 8 && base_scale > 0.28)
-        {
-            base_scale -= 0.03;
-            font_scale1 = base_scale * 1.1;
-            font_scale2 = base_scale * 0.9;
-            sz1 = cv::getTextSize(line1, cv::FONT_HERSHEY_SIMPLEX, font_scale1, thickness, &baseline1);
-            sz2 = cv::getTextSize(line2, cv::FONT_HERSHEY_SIMPLEX, font_scale2, thickness, &baseline2);
-            max_w = std::max(sz1.width, sz2.width);
-        }
-        const int total_h = sz1.height + line_gap + sz2.height;
-        const int y1 = (gallary_view.rows - total_h) / 2 + sz1.height;
-        const int y2 = y1 + line_gap + sz1.height;
-        const int tx1 = std::max(0, (col0_w - sz1.width) / 2);
-        const int tx2 = std::max(0, (col0_w - sz2.width) / 2);
-        auto draw_line = [&](const std::string &s, int x, int y, double fs) {
-            cv::putText(gallary_view, s, cv::Point(x + 1, y + 1), cv::FONT_HERSHEY_SIMPLEX, fs,
-                        cv::Scalar(0, 0, 0), thickness + 1, cv::LINE_AA);
-            cv::putText(gallary_view, s, cv::Point(x, y), cv::FONT_HERSHEY_SIMPLEX, fs,
-                        cv::Scalar(0, 255, 255), thickness, cv::LINE_AA);
-        };
-        draw_line(line1, tx1, y1, font_scale1);
-        draw_line(line2, tx2, y2, font_scale2);
-    }
     return gallary_view;
 }
 

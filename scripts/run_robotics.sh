@@ -16,7 +16,7 @@ BIN="./bin/robotics_demo"
     -mps0 "${MODELS}/YOLOV5Pose_PPU.dxnn" \
     -mps1 "${MODELS}/DDRNet_1.dxnn" \
     -md "${MODELS}/MobED_detector_80_fixed.dxnn" \
-    -c
+    -c --exit-btn
 
 popd > /dev/null
 

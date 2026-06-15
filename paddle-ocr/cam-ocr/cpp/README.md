@@ -25,6 +25,7 @@ cmake --build build -j
 ./build/cam_ocr_demo --enable-sharpness
 ./build/cam_ocr_demo --sharpness soft
 ./build/cam_ocr_demo --sharpness strong
+./build/cam_ocr_demo --exit-btn
 ```
 
 Live camera input defaults to `/dev/video0`, `1280x720`, `15 FPS`, MJPG format.
@@ -56,4 +57,5 @@ Detection logs show whether the `640` or `960` detection model is selected.
 The C++ demo uses `cpp/assets/NotoSansJP-VariableFont_wght.ttf` as the default
 font for the result overlay and inference result text.
 
-Keyboard shortcuts match the Python demo for exit: `Esc` or `Q`.
+Keyboard shortcuts match the Python demo for exit: `Esc` or `Q`. Add
+`--exit-btn` to show a small exit button in the top-right title bar.

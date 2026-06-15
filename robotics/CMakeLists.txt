@@ -52,6 +52,7 @@ add_dxrt_lib()
 add_opencv()
 
 find_package(OpenSSL REQUIRED)
+find_package(Qt5 REQUIRED COMPONENTS Widgets)
 
 add_library(dx_model_crypto SHARED
     ${CMAKE_SOURCE_DIR}/src/encrypted_model_engine.cpp
@@ -100,7 +101,7 @@ endif()
 target_include_directories(robotics_demo PRIVATE
     ${CMAKE_SOURCE_DIR}/include
 )
-target_link_libraries(robotics_demo ${link_libs} dx_model_crypto ${STD_FS_LIB})
+target_link_libraries(robotics_demo Qt5::Widgets ${link_libs} dx_model_crypto ${STD_FS_LIB})
 set_target_properties(robotics_demo PROPERTIES
     INSTALL_RPATH "$ORIGIN/../lib"
 )
