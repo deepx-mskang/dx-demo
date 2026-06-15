@@ -45,9 +45,12 @@ struct EngineOptions {
     std::string language = "ch";
     std::string modelProfile = "mobile";
     bool enableUvdoc = false;
+    int detAsyncQueueSize = 2;
     int recAsyncQueueSize = 6;
 };
 
+inline constexpr int kDetAsyncQueueMax = 4;
+inline constexpr int kDetAsyncQueueDefault = 2;
 inline constexpr int kRecAsyncQueueMax = 10;
 inline constexpr int kRecAsyncQueueDefault = 6;
 
@@ -75,6 +78,7 @@ private:
     std::string detModelProfile_ = "mobile";
     std::string recModelProfile_ = "mobile";
     bool enableUvdoc_ = false;
+    int detAsyncQueueSize_ = kDetAsyncQueueDefault;
     int recAsyncQueueSize_ = kRecAsyncQueueDefault;
 
     std::filesystem::path detModelPath_;
@@ -83,9 +87,13 @@ private:
     std::unique_ptr<dxrt::InferenceEngine> clsModel_;
     std::map<int, std::unique_ptr<dxrt::InferenceEngine>> recModels_;
     std::vector<std::string> characters_;
+    std::mutex detInflightMutex_;
+    std::condition_variable detInflightCv_;
+    int detInflight_{0};
     std::mutex recInflightMutex_;
     std::condition_variable recInflightCv_;
     int recInflight_{0};
+    bool detCallbacksRegistered_{false};
     bool recCallbacksRegistered_{false};
 
     static std::filesystem::path resolveRoot(const std::filesystem::path& requested);
@@ -100,10 +108,15 @@ private:
     std::unique_ptr<dxrt::InferenceEngine> loadEngine(const std::filesystem::path& path, int bufferCount = 0) const;
     void loadModels();
     void loadCharacters();
+    void setupDetAsyncCallbacks();
     void setupRecAsyncCallbacks();
+    bool acquireDetInflightSlot();
+    void releaseDetInflightSlot();
+    void waitForDetInflightEmpty();
     bool acquireRecInflightSlot();
     void releaseRecInflightSlot();
     void waitForRecInflightEmpty();
+    int onDetAsyncComplete(dxrt::TensorPtrs& outputs, void* userData);
     int onRecAsyncComplete(dxrt::TensorPtrs& outputs, void* userData);
     dxrt::InferenceEngine& detEngine();
     dxrt::InferenceEngine& clsEngine();
@@ -125,6 +138,7 @@ private:
     static dxrt::TensorPtrs runInference(dxrt::InferenceEngine& engine, const cv::Mat& input, const char* stage);
 
     static int routeRecognition(int width, int height);
+    static bool isLikelyUnsupportedQuarterTurn(const std::vector<std::vector<cv::Point2f>>& boxes);
     static cv::Mat resizePpocr(const cv::Mat& image, int targetHeight, int targetWidth, PaddingInfo* paddingInfo);
     static cv::Mat resizeDefault(const cv::Mat& image, int targetHeight, int targetWidth);
     static cv::Mat rotateIfVertical(const cv::Mat& crop);
@@ -140,6 +154,11 @@ private:
     static cv::Mat tensorToFloatMat(const dxrt::TensorPtr& tensor);
     static std::vector<float> tensorToFloatVector(const dxrt::TensorPtr& tensor);
     std::pair<std::string, double> decodeRecognition(const dxrt::TensorPtr& tensor) const;
+    static std::vector<std::vector<cv::Point2f>> decodeDetection(
+        const cv::Mat& pred,
+        const PaddingInfo& padding,
+        int imageWidth,
+        int imageHeight);
 
     static std::vector<cv::Point2f> getMiniBox(const std::vector<cv::Point>& contour, float* minSide);
     static std::vector<cv::Point2f> getMiniBox(const std::vector<cv::Point2f>& points, float* minSide);

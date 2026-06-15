@@ -17,16 +17,55 @@ namespace fs = std::filesystem;
 namespace camocr {
 namespace {
 
-constexpr double kDetThresh = 0.3;
+// 검출 모델의 출력 맵을 이진화할 때 쓰는 임계값입니다.
+// 이 값보다 큰 픽셀을 텍스트 후보로 봅니다.
+constexpr double kDetThresh = 0.7;
+
+// 검출된 박스가 실제 텍스트일 가능성을 평가하는 점수 임계값입니다.
+// 이 값보다 낮으면 박스를 버립니다.
 constexpr double kDetBoxThresh = 0.6;
-constexpr double kDetUnclipRatio = 1.5;
+
+// 검출된 텍스트 윤곽선을 바깥쪽으로 얼마나 확장할지 정하는 비율입니다.
+// 텍스트 영역을 조금 넉넉하게 감싸도록 만드는 값입니다.
+constexpr double kDetUnclipRatio = 1.2;
+
+// 검출 후처리에서 최대 몇 개의 후보 contour를 검사할지 제한하는 값입니다.
+// 속도와 안정성을 위한 상한입니다.
 constexpr int kDetMaxCandidates = 50;
-constexpr double kClsThresh = 0.9;
-constexpr double kRecDropScore = 0.3;
-constexpr int kMaxOcrBoxes = 50;
+
+// 방향 분류 결과를 신뢰할 최소 점수입니다.
+// "180" 회전으로 판단됐고 점수가 이 값보다 클 때만 이미지를 180도 뒤집습니다.
+constexpr double kClsThresh = 0.8;
+
+// 문자 인식 결과의 평균 신뢰도가 이 값보다 낮으면 최종 결과에서 버립니다.
+// 낮은 품질의 텍스트를 걸러내는 기준입니다.
+constexpr double kRecDropScore = 0.5;
+
+// 한 프레임에서 최종적으로 처리할 최대 텍스트 박스 개수입니다.
+// 너무 많은 박스가 나오면 일부만 처리해서 속도와 안정성을 유지합니다.
+constexpr int kMaxOcrBoxes = 30;
+
+// 검출 박스의 최소 변 길이입니다.
+// 너무 작은 박스는 노이즈일 가능성이 커서 제외합니다.
 constexpr int kMinBoxSide = 4;
+
+// 인식 단계로 넘길 crop 이미지의 최소 폭/높이 기준입니다.
+// 너무 작은 crop은 인식 품질이 낮아서 버립니다.
 constexpr int kMinCropSide = 4;
-constexpr int kMaxCropSide = 5000;
+
+struct DetAsyncJob {
+    cv::Mat input;
+    int origWidth = 0;
+    int origHeight = 0;
+    int paddedWidth = 0;
+    int paddedHeight = 0;
+    int imageWidth = 0;
+    int imageHeight = 0;
+    std::vector<std::vector<cv::Point2f>>* boxes = nullptr;
+    std::mutex* inflightMutex = nullptr;
+    std::condition_variable* inflightCv = nullptr;
+    int* inflightCount = nullptr;
+};
 
 struct RecAsyncJob {
     cv::Mat input;
@@ -163,6 +202,7 @@ PaddleOcrEngine::PaddleOcrEngine(const EngineOptions& options)
       language_(options.language),
       modelProfile_(options.modelProfile),
       enableUvdoc_(options.enableUvdoc),
+      detAsyncQueueSize_(std::clamp(options.detAsyncQueueSize, 1, kDetAsyncQueueMax)),
       recAsyncQueueSize_(std::clamp(options.recAsyncQueueSize, 1, kRecAsyncQueueMax))
 {
     if (modelProfile_ != "mobile" && modelProfile_ != "server" && modelProfile_ != "hybrid") {
@@ -324,11 +364,12 @@ void PaddleOcrEngine::loadModels()
               << " (" << detModelDir_ << ")" << std::endl;
     std::cout << "[OCR] Recognition: " << recModelProfile_
               << " (" << recModelDir_ << ")" << std::endl;
+    std::cout << "[OCR] Detection async queue size: " << detAsyncQueueSize_ << std::endl;
     std::cout << "[OCR] Recognition async queue size: " << recAsyncQueueSize_ << std::endl;
     std::cout << "[OCR] Loading det/cls/rec models at startup..." << std::endl;
 
     std::cout << "[OCR]   det: " << detModelPath_.filename().string() << std::endl;
-    detModel_ = loadEngine(detModelPath_);
+    detModel_ = loadEngine(detModelPath_, detAsyncQueueSize_);
 
     clsModel_ = loadEngine(detModelDir_ / "textline_ori.dxnn");
     std::cout << "[OCR]   cls: textline_ori.dxnn" << std::endl;
@@ -338,8 +379,21 @@ void PaddleOcrEngine::loadModels()
         recModels_[ratio] = loadEngine(path, recAsyncQueueSize_);
     }
 
+    setupDetAsyncCallbacks();
     setupRecAsyncCallbacks();
     std::cout << "[OCR] All det/cls/rec models loaded and kept resident." << std::endl;
+}
+
+void PaddleOcrEngine::setupDetAsyncCallbacks()
+{
+    if (detCallbacksRegistered_) {
+        return;
+    }
+
+    detModel_->RegisterCallback([this](dxrt::TensorPtrs& outputs, void* userData) -> int {
+        return onDetAsyncComplete(outputs, userData);
+    });
+    detCallbacksRegistered_ = true;
 }
 
 void PaddleOcrEngine::setupRecAsyncCallbacks()
@@ -355,6 +409,31 @@ void PaddleOcrEngine::setupRecAsyncCallbacks()
         });
     }
     recCallbacksRegistered_ = true;
+}
+
+bool PaddleOcrEngine::acquireDetInflightSlot()
+{
+    std::unique_lock<std::mutex> lock(detInflightMutex_);
+    detInflightCv_.wait(lock, [this] { return detInflight_ < detAsyncQueueSize_; });
+    ++detInflight_;
+    return true;
+}
+
+void PaddleOcrEngine::releaseDetInflightSlot()
+{
+    {
+        std::lock_guard<std::mutex> lock(detInflightMutex_);
+        if (detInflight_ > 0) {
+            --detInflight_;
+        }
+    }
+    detInflightCv_.notify_all();
+}
+
+void PaddleOcrEngine::waitForDetInflightEmpty()
+{
+    std::unique_lock<std::mutex> lock(detInflightMutex_);
+    detInflightCv_.wait(lock, [this] { return detInflight_ == 0; });
 }
 
 bool PaddleOcrEngine::acquireRecInflightSlot()
@@ -380,6 +459,43 @@ void PaddleOcrEngine::waitForRecInflightEmpty()
 {
     std::unique_lock<std::mutex> lock(recInflightMutex_);
     recInflightCv_.wait(lock, [this] { return recInflight_ == 0; });
+}
+
+int PaddleOcrEngine::onDetAsyncComplete(dxrt::TensorPtrs& outputs, void* userData)
+{
+    auto job = std::unique_ptr<DetAsyncJob>(static_cast<DetAsyncJob*>(userData));
+    if (!job) {
+        releaseDetInflightSlot();
+        return -1;
+    }
+
+    try {
+        if (job->boxes != nullptr && !outputs.empty()) {
+            const cv::Mat pred = tensorToFloatMat(outputs.front());
+            PaddingInfo padding;
+            padding.origWidth = job->origWidth;
+            padding.origHeight = job->origHeight;
+            padding.paddedWidth = job->paddedWidth;
+            padding.paddedHeight = job->paddedHeight;
+            *job->boxes = decodeDetection(pred, padding, job->imageWidth, job->imageHeight);
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "[OCR] Detection async callback error: " << e.what() << std::endl;
+    }
+
+    if (job->inflightMutex != nullptr && job->inflightCv != nullptr && job->inflightCount != nullptr) {
+        {
+            std::lock_guard<std::mutex> lock(*job->inflightMutex);
+            if (*job->inflightCount > 0) {
+                --(*job->inflightCount);
+            }
+        }
+        job->inflightCv->notify_all();
+    } else {
+        releaseDetInflightSlot();
+    }
+
+    return 0;
 }
 
 int PaddleOcrEngine::onRecAsyncComplete(dxrt::TensorPtrs& outputs, void* userData)
@@ -474,6 +590,19 @@ OcrResult PaddleOcrEngine::run(const cv::Mat& bgrImage)
         result.boxes.resize(kMaxOcrBoxes);
     }
 
+    if (isLikelyUnsupportedQuarterTurn(result.boxes)) {
+        std::cout << "[OCR] Skip frame: likely unsupported 90/270-degree text orientation" << std::endl;
+        result.perf.detTimeMs = detMs;
+        result.perf.clsTimeMs = 0.0;
+        result.perf.recTimeMs = 0.0;
+        result.perf.e2eTimeMs = elapsedMs(start);
+        result.perf.totalChars = 0;
+        result.perf.cps = 0.0;
+        result.perf.numBoxes = static_cast<int>(result.boxes.size());
+        result.perf.numCrops = 0;
+        return result;
+    }
+
     std::vector<cv::Mat> crops;
     crops.reserve(result.boxes.size());
     for (const auto& box : result.boxes) {
@@ -523,6 +652,42 @@ int PaddleOcrEngine::routeRecognition(int width, int height)
     if (ratio <= 15.0) return 15;
     if (ratio <= 25.0) return 25;
     return 35;
+}
+
+bool PaddleOcrEngine::isLikelyUnsupportedQuarterTurn(const std::vector<std::vector<cv::Point2f>>& boxes)
+{
+    if (boxes.size() < 3) {
+        return false;
+    }
+
+    int tallBoxCount = 0;
+    int strongTallBoxCount = 0;
+    for (const auto& box : boxes) {
+        if (box.size() != 4) {
+            continue;
+        }
+
+        const double width = std::max(
+            cv::norm(box[0] - box[1]),
+            cv::norm(box[2] - box[3]));
+        const double height = std::max(
+            cv::norm(box[0] - box[3]),
+            cv::norm(box[1] - box[2]));
+        if (width <= 0.0 || height <= 0.0) {
+            continue;
+        }
+
+        if (height > width * 1.2) {
+            ++tallBoxCount;
+        }
+        if (height > width * 1.8) {
+            ++strongTallBoxCount;
+        }
+    }
+
+    const int totalBoxes = static_cast<int>(boxes.size());
+    return tallBoxCount >= std::max(3, totalBoxes * 2 / 3) &&
+           strongTallBoxCount >= std::max(2, totalBoxes / 3);
 }
 
 cv::Mat PaddleOcrEngine::resizePpocr(const cv::Mat& image, int targetHeight, int targetWidth, PaddingInfo* paddingInfo)
@@ -615,59 +780,46 @@ std::vector<std::vector<cv::Point2f>> PaddleOcrEngine::detect(const cv::Mat& ima
         input = resizePpocr(image, modelShape.height, modelShape.width, &padding);
     }
 
+    setupDetAsyncCallbacks();
+
+    std::vector<std::vector<cv::Point2f>> boxes;
     const auto start = std::chrono::steady_clock::now();
-    auto outputs = runInference(engine, input, "detection");
+
+    if (!acquireDetInflightSlot()) {
+        throw std::runtime_error("Failed to acquire detection async queue slot");
+    }
+
+    auto* job = new DetAsyncJob();
+    job->input = input.clone();
+    job->origWidth = padding.origWidth;
+    job->origHeight = padding.origHeight;
+    job->paddedWidth = padding.paddedWidth;
+    job->paddedHeight = padding.paddedHeight;
+    job->imageWidth = image.cols;
+    job->imageHeight = image.rows;
+    job->boxes = &boxes;
+    job->inflightMutex = &detInflightMutex_;
+    job->inflightCv = &detInflightCv_;
+    job->inflightCount = &detInflight_;
+
+    int jobId = -1;
+    try {
+        jobId = engine.RunAsync(job->input.data, static_cast<void*>(job), nullptr);
+        job = nullptr;
+    } catch (...) {
+        delete job;
+        releaseDetInflightSlot();
+        throw;
+    }
+
+    if (jobId >= 0) {
+        engine.Wait(jobId);
+    }
+    waitForDetInflightEmpty();
+
     if (latencyMs) {
         *latencyMs = elapsedMs(start);
     }
-
-    cv::Mat pred = tensorToFloatMat(outputs.front());
-    cv::Mat mask;
-    cv::threshold(pred, mask, kDetThresh, 1.0, cv::THRESH_BINARY);
-    mask.convertTo(mask, CV_8U, 255.0);
-
-    std::vector<std::vector<cv::Point>> contours;
-    cv::findContours(mask, contours, cv::RETR_LIST, cv::CHAIN_APPROX_SIMPLE);
-
-    std::vector<std::vector<cv::Point2f>> boxes;
-    const int contourCount = std::min(static_cast<int>(contours.size()), kDetMaxCandidates);
-    for (int i = 0; i < contourCount; ++i) {
-        float minSide = 0.0f;
-        auto miniBox = getMiniBox(contours[i], &minSide);
-        if (minSide < 3.0f) {
-            continue;
-        }
-
-        const double score = boxScoreFast(pred, miniBox);
-        if (score < kDetBoxThresh) {
-            continue;
-        }
-
-        auto expanded = unclipApprox(contours[i], kDetUnclipRatio);
-        if (expanded.empty()) {
-            continue;
-        }
-
-        float expandedSide = 0.0f;
-        auto box = getMiniBox(expanded, &expandedSide);
-        if (expandedSide < 5.0f) {
-            continue;
-        }
-
-        const double scaleX = static_cast<double>(padding.paddedWidth) / pred.cols;
-        const double scaleY = static_cast<double>(padding.paddedHeight) / pred.rows;
-        for (auto& p : box) {
-            p.x = static_cast<float>(p.x * scaleX);
-            p.y = static_cast<float>(p.y * scaleY);
-        }
-
-        box = orderPointsClockwise(box);
-        if (clipAndValidate(&box, image.cols, image.rows)) {
-            boxes.push_back(box);
-        }
-    }
-
-    sortBoxes(&boxes);
     return boxes;
 }
 
@@ -838,6 +990,61 @@ std::pair<std::string, double> PaddleOcrEngine::decodeRecognition(const dxrt::Te
         return {"", 0.0};
     }
     return {text, confSum / confCount};
+}
+
+std::vector<std::vector<cv::Point2f>> PaddleOcrEngine::decodeDetection(
+    const cv::Mat& pred,
+    const PaddingInfo& padding,
+    int imageWidth,
+    int imageHeight)
+{
+    cv::Mat mask;
+    cv::threshold(pred, mask, kDetThresh, 1.0, cv::THRESH_BINARY);
+    mask.convertTo(mask, CV_8U, 255.0);
+
+    std::vector<std::vector<cv::Point>> contours;
+    cv::findContours(mask, contours, cv::RETR_LIST, cv::CHAIN_APPROX_SIMPLE);
+
+    std::vector<std::vector<cv::Point2f>> boxes;
+    const int contourCount = std::min(static_cast<int>(contours.size()), kDetMaxCandidates);
+    for (int i = 0; i < contourCount; ++i) {
+        float minSide = 0.0f;
+        auto miniBox = getMiniBox(contours[i], &minSide);
+        if (minSide < 3.0f) {
+            continue;
+        }
+
+        const double score = boxScoreFast(pred, miniBox);
+        if (score < kDetBoxThresh) {
+            continue;
+        }
+
+        auto expanded = unclipApprox(contours[i], kDetUnclipRatio);
+        if (expanded.empty()) {
+            continue;
+        }
+
+        float expandedSide = 0.0f;
+        auto box = getMiniBox(expanded, &expandedSide);
+        if (expandedSide < 5.0f) {
+            continue;
+        }
+
+        const double scaleX = static_cast<double>(padding.paddedWidth) / pred.cols;
+        const double scaleY = static_cast<double>(padding.paddedHeight) / pred.rows;
+        for (auto& p : box) {
+            p.x = static_cast<float>(p.x * scaleX);
+            p.y = static_cast<float>(p.y * scaleY);
+        }
+
+        box = orderPointsClockwise(box);
+        if (clipAndValidate(&box, imageWidth, imageHeight)) {
+            boxes.push_back(box);
+        }
+    }
+
+    sortBoxes(&boxes);
+    return boxes;
 }
 
 std::vector<cv::Point2f> PaddleOcrEngine::getMiniBox(const std::vector<cv::Point>& contour, float* minSide)
@@ -1063,8 +1270,7 @@ bool PaddleOcrEngine::isValidCropForRecognition(const cv::Mat& crop)
     if (crop.empty()) {
         return false;
     }
-    return crop.cols >= kMinCropSide && crop.rows >= kMinCropSide &&
-           crop.cols <= kMaxCropSide && crop.rows <= kMaxCropSide;
+    return crop.cols >= kMinCropSide && crop.rows >= kMinCropSide;
 }
 
 void PaddleOcrEngine::sortBoxes(std::vector<std::vector<cv::Point2f>>* boxes)

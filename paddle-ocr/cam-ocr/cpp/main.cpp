@@ -595,6 +595,7 @@ cv::Mat makeRightDisplayImage(
         }
 
         QFont font(family, fontSize);
+        font.setWeight(QFont::Normal);
         if (layoutCache) {
             (*layoutCache)[cacheKey] = RightTextLayout{
                 qText,
