@@ -17,6 +17,7 @@ from PyQt5.QtCore import QFileSystemWatcher, Qt, QTimer
 from PyQt5.QtGui import QFont, QGuiApplication, QPixmap, QShowEvent
 from PyQt5.QtWidgets import (
     QApplication,
+    QComboBox,
     QFrame,
     QGridLayout,
     QHBoxLayout,
@@ -28,14 +29,28 @@ from PyQt5.QtWidgets import (
 )
 
 # --- Window geometry ---
-WINDOW_WIDTH = 1400
-WINDOW_HEIGHT = 900
+WINDOW_WIDTH = 1600
+WINDOW_HEIGHT = 1000
+
+LANGUAGE_OPTIONS = [
+    ("English", "en"),
+    ("中文", "zh"),
+    ("日本語", "ja"),
+    ("한국어", "ko"),
+]
+
+MAIN_TITLE_I18N = {
+    "en": "DEEPX AI Demo Hub",
+    "zh": "DEEPX AI 演示中心",
+    "ja": "DEEPX AI デモハブ",
+    "ko": "DEEPX AI 데모 허브",
+}
 
 # How many launcher cards to show (first N entries of LAUNCHER_ITEMS).
-NUM_ITEMS = 9
+NUM_ITEMS = 12
 
 # Grid columns; rows are computed as ceil(NUM_ITEMS / GRID_COLUMNS).
-GRID_COLUMNS = 3
+GRID_COLUMNS = 4
 
 # Launcher root (directory containing this file); assets and ready state live here.
 _ROOT = Path(__file__).resolve().parent
@@ -59,14 +74,24 @@ _ready_finishers: dict[str, Callable[[], None]] = {}
 DEFAULT_BUTTON_LOADING_SEC = 1.0
 LAUNCHER_ITEMS = [
     {
-        "title": "Hyundai Robotics - Delivery Robot (MobED)",
+        "title": "Hyundai Robotics - Delivery Robot (DAL-e)",
+        "title_i18n": {
+            "zh": "Hyundai Robotics - 配送机器人 (DAL-e)",
+            "ja": "Hyundai Robotics - 配送ロボット (DAL-e)",
+            "ko": "현대로보틱스 - 배송 로봇 (DAL-e)",
+        },
         "image": "assets/demo-robotics.png",
         "video_script": "../scripts/run_robotics_video.sh",
         "camera_script": "../scripts/run_robotics.sh",
         "loading_sec": 5,
     },
     {
-        "title": "YOLO26-S (OD / POSE / SEG / CLS)",
+        "title": "YOLO26-S (OD / POSE / SEG)",
+        "title_i18n": {
+            "zh": "YOLO26-S (目标检测 / 姿态 / 分割)",
+            "ja": "YOLO26-S (物体検出 / ポーズ / 分割)",
+            "ko": "YOLO26-S (객체 탐지 / 자세 / 분할)",
+        },
         "image": "assets/demo-yolo26.png",
         "video_script": "../scripts/run_yolo26_4_video.sh",
         "camera_script": "../scripts/run_yolo26_4.sh",
@@ -74,6 +99,11 @@ LAUNCHER_ITEMS = [
     },
     {
         "title": "Mono Depth Estimation (Depth Anything v2)",
+        "title_i18n": {
+            "zh": "单目深度估计 (Depth Anything v2)",
+            "ja": "単眼深度推定 (Depth Anything v2)",
+            "ko": "단안 깊이 추정 (Depth Anything v2)",
+        },
         "image": "assets/demo-depth.png",
         "video_script": "../scripts/run_depth_video.sh",
         "camera_script": "../scripts/run_depth.sh",
@@ -83,6 +113,11 @@ LAUNCHER_ITEMS = [
     },
     {
         "title": "PaddleOCR v5",
+        "title_i18n": {
+            "zh": "PaddleOCR v5",
+            "ja": "PaddleOCR v5",
+            "ko": "PaddleOCR v5",
+        },
         "image": "assets/demo-ocr.gif",
         "video_script": "../scripts/run_ocr_web.sh",
         "camera_script": "../scripts/run_ocr.sh",
@@ -90,21 +125,60 @@ LAUNCHER_ITEMS = [
         "video_label": "Web Based",
     },
     {
-        "title": "CLIP Single-channel",
-        "image": "assets/demo-clip-single.png",
-        "video_script": "../scripts/run_clip_single_video.sh",
-        "camera_script": "../scripts/run_clip_single.sh",
-        "loading_sec": 15,
-    },
-    {
         "title": "YOLOv5S Multi-channel (36)",
+        "title_i18n": {
+            "zh": "YOLOv5S 多通道 (36)",
+            "ja": "YOLOv5S マルチチャンネル (36)",
+            "ko": "YOLOv5S 멀티채널 (36)",
+        },
         "image": "assets/demo-yolo-multi.png",
         "video_script": "../scripts/run_yolo_multi_video.sh",
         "camera_script": "../scripts/run_yolo_multi.sh",
         "loading_sec": 30,
     },
     {
+        "title": "Hand Landmark & Pose Estimation",
+        "title_i18n": {
+            "zh": "手部关键点与姿态估计",
+            "ja": "手のランドマーク・姿勢推定",
+            "ko": "손 랜드마크 및 자세 추정",
+        },
+        "image": "assets/demo-hands.png",
+        "video_script": "../scripts/run_hands_video.sh",
+        "camera_script": "../scripts/run_hands.sh",
+        "loading_sec": 5,
+    },
+    {
+        "title": "Real-Time Road Scene Perception",
+        "title_i18n": {
+            "zh": "实时道路场景感知",
+            "ja": "リアルタイム道路シーン認識",
+            "ko": "실시간 도로 장면 인식",
+        },
+        "image": "assets/demo-automotive.png",
+        "video_script": "../scripts/run_PIDNet.sh",
+        "camera_script": "../scripts/run_YOLOPv2.sh",
+        "loading_sec": 5,
+    },
+    {
+        "title": "DRON",
+        "title_i18n": {
+            "zh": "DRON",
+            "ja": "DRON",
+            "ko": "DRON",
+        },
+        "image": "assets/demo-dron.png",
+        "video_script": "../scripts/run_PIDNet.sh",
+        "camera_script": "../scripts/run_YOLOPv2.sh",
+        "loading_sec": 5,
+    },
+    {
         "title": "DEEPX Model Zoo",
+        "title_i18n": {
+            "zh": "DEEPX 模型库",
+            "ja": "DEEPX モデル集",
+            "ko": "DEEPX 모델 저장소",
+        },
         "image": "assets/demo-modelzoo.png",
         "video_label": "Open",
         "camera_label": "Close",
@@ -112,7 +186,24 @@ LAUNCHER_ITEMS = [
         "camera_script": "../scripts/kill_modelzoo.sh",
     },
     {
+        "title": "CLIP Single-channel",
+        "title_i18n": {
+            "zh": "CLIP 单通道",
+            "ja": "CLIP シングルチャンネル",
+            "ko": "CLIP 단일 채널",
+        },
+        "image": "assets/demo-clip-single.png",
+        "video_script": "../scripts/run_clip_single_video.sh",
+        "camera_script": "../scripts/run_clip_single.sh",
+        "loading_sec": 15,
+    },
+    {
         "title": "CLIP Multi-channel",
+        "title_i18n": {
+            "zh": "CLIP 多通道",
+            "ja": "CLIP マルチチャンネル",
+            "ko": "CLIP 멀티채널",
+        },
         "image": "assets/demo-clip.png",
         "video_script": "../scripts/run_clip_video.sh",
         "camera_script": "../scripts/run_clip.sh",
@@ -123,6 +214,11 @@ LAUNCHER_ITEMS = [
     },
     {
         "title": "Performance Monitoring (CPU / NPU)",
+        "title_i18n": {
+            "zh": "性能监控 (CPU / NPU)",
+            "ja": "性能モニタリング (CPU / NPU)",
+            "ko": "성능 모니터링 (CPU / NPU)",
+        },
         "image": "assets/demo-perf.png",
         "video_label": "Start",
         "camera_label": "Stop",
@@ -182,6 +278,22 @@ def _normalize_extra_buttons(raw: object, fallback_ms: int) -> list[tuple[str, s
             ms = fallback_ms
         out.append((str(label), str(script), ms))
     return out
+
+
+def _localized_main_title(language_code: str) -> str:
+    return MAIN_TITLE_I18N.get(language_code, MAIN_TITLE_I18N["en"])
+
+
+def _localized_item_title(cfg: dict, language_code: str) -> str:
+    fallback = str(cfg["title"])
+    if language_code == "en":
+        return fallback
+    translations = cfg.get("title_i18n")
+    if isinstance(translations, dict):
+        translated = translations.get(language_code)
+        if translated:
+            return str(translated)
+    return fallback
 
 
 def _ensure_ready_status_dir() -> Path:
@@ -433,6 +545,9 @@ class LauncherItem(QWidget):
 
         self._refresh_image()
 
+    def set_title(self, title: str) -> None:
+        self._title.setText(title)
+
     def showEvent(self, event: QShowEvent) -> None:  # type: ignore[override]
         super().showEvent(event)
         self._refresh_image()
@@ -466,14 +581,84 @@ class LauncherItem(QWidget):
 class MainWindow(QWidget):
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("DEEPX Demo Launcher")
+        self.setWindowTitle("Launcher")
         self.setFixedSize(WINDOW_WIDTH, WINDOW_HEIGHT)
         self.setStyleSheet("background-color: #000000;")
 
-        grid = QGridLayout(self)
-        grid.setContentsMargins(16, 16, 16, 16)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(16, 16, 16, 16)
+        root.setSpacing(14)
+
+        header = QGridLayout()
+        header.setContentsMargins(4, 0, 4, 0)
+        header.setSpacing(10)
+
+        self._main_title = QLabel(_localized_main_title("en"))
+        title_font = QFont()
+        title_font.setPointSize(20)
+        title_font.setBold(True)
+        self._main_title.setFont(title_font)
+        self._main_title.setAlignment(Qt.AlignCenter)
+        self._main_title.setStyleSheet("color: #ffffff; background: transparent;")
+
+        language_controls = QWidget()
+        language_row = QHBoxLayout(language_controls)
+        language_row.setContentsMargins(0, 0, 0, 0)
+        language_row.setSpacing(10)
+
+        language_label = QLabel("Language")
+        language_label.setStyleSheet(
+            "color: #c5f3ff; background: transparent; font-size: 13px;"
+        )
+
+        self._language_combo = QComboBox()
+        for label, code in LANGUAGE_OPTIONS:
+            self._language_combo.addItem(label, code)
+        self._language_combo.setCurrentIndex(0)
+        self._language_combo.setCursor(Qt.PointingHandCursor)
+        self._language_combo.setFixedWidth(160)
+        self._language_combo.setStyleSheet(
+            "QComboBox {"
+            " color: #ffffff;"
+            " background-color: #0a1f33;"
+            " border: 1px solid #00b4d8;"
+            " border-radius: 4px;"
+            " padding: 6px 12px;"
+            " font-size: 13px;"
+            "}"
+            "QComboBox:hover {"
+            " border-color: #48e1ff;"
+            "}"
+            "QComboBox::drop-down {"
+            " width: 28px;"
+            " border: none;"
+            "}"
+            "QComboBox QAbstractItemView {"
+            " color: #ffffff;"
+            " background-color: #0a1f33;"
+            " selection-background-color: #123a5c;"
+            " selection-color: #ffffff;"
+            " outline: none;"
+            "}"
+        )
+
+        language_row.addWidget(language_label)
+        language_row.addWidget(self._language_combo)
+
+        left_balance = QWidget()
+        left_balance.setFixedWidth(language_controls.sizeHint().width())
+
+        header.addWidget(left_balance, 0, 0)
+        header.addWidget(self._main_title, 0, 1, alignment=Qt.AlignCenter)
+        header.addWidget(language_controls, 0, 2, alignment=Qt.AlignRight)
+        header.setColumnStretch(1, 1)
+        root.addLayout(header)
+
+        grid = QGridLayout()
+        grid.setContentsMargins(0, 0, 0, 0)
         grid.setHorizontalSpacing(16)
         grid.setVerticalSpacing(16)
+        root.addLayout(grid, stretch=1)
 
         n = min(NUM_ITEMS, len(LAUNCHER_ITEMS))
         if NUM_ITEMS > len(LAUNCHER_ITEMS):
@@ -483,6 +668,7 @@ class MainWindow(QWidget):
                 file=sys.stderr,
             )
 
+        self._launcher_items: list[tuple[LauncherItem, dict]] = []
         for i in range(n):
             cfg = LAUNCHER_ITEMS[i]
             img_path = _resolve_image_path(str(cfg["image"]))
@@ -506,14 +692,27 @@ class MainWindow(QWidget):
             ]
             actions.extend(extras)
             item = LauncherItem(
-                title=str(cfg["title"]),
+                title=_localized_item_title(cfg, "en"),
                 image_path=img_path,
                 actions=actions,
             )
+            self._launcher_items.append((item, cfg))
             row, col = i // GRID_COLUMNS, i % GRID_COLUMNS
             grid.addWidget(item, row, col)
 
+        self._language_combo.currentIndexChanged.connect(self._apply_language)
+        self._apply_language()
         self._place_center_on_screen()
+
+    def _current_language_code(self) -> str:
+        code = self._language_combo.currentData()
+        return str(code) if code else "en"
+
+    def _apply_language(self, _index: int | None = None) -> None:
+        language_code = self._current_language_code()
+        self._main_title.setText(_localized_main_title(language_code))
+        for item, cfg in self._launcher_items:
+            item.set_title(_localized_item_title(cfg, language_code))
 
     def _place_center_on_screen(self) -> None:
         """Center the window on the primary screen's available (work) area."""
