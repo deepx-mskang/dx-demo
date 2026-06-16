@@ -1788,30 +1788,30 @@ private:
         int y = content.top();
 
         QFont eyebrow = painter.font();
-        eyebrow.setPixelSize(13);
+        eyebrow.setPixelSize(28);
         eyebrow.setBold(true);
         painter.setFont(eyebrow);
         painter.setPen(QColor(69, 241, 255));
-        painter.drawText(QRect(content.left(), y, content.width(), 18),
+        painter.drawText(QRect(content.left(), y, content.width(), 28),
                          Qt::AlignLeft | Qt::AlignVCenter, "DEEPX M1");
-        y += 28;
+        y += 32;
 
         QFont title = painter.font();
-        title.setPixelSize(30);
+        title.setPixelSize(42);
         title.setBold(true);
         painter.setFont(title);
         painter.setPen(QColor(245, 248, 252));
-        painter.drawText(QRect(content.left(), y, content.width(), 40),
+        painter.drawText(QRect(content.left(), y, content.width(), 42),
                          Qt::AlignLeft | Qt::AlignVCenter, "HANDS + POSE");
-        y += 44;
+        y += 50;
 
         QFont subtitle = painter.font();
-        subtitle.setPixelSize(14);
+        subtitle.setPixelSize(20);
         subtitle.setBold(false);
         painter.setFont(subtitle);
         painter.setPen(QColor(154, 166, 180));
         painter.drawText(QRect(content.left(), y, content.width(), 22),
-                         Qt::AlignLeft | Qt::AlignVCenter, "21 hand points + YOLO26 pose");
+                         Qt::AlignLeft | Qt::AlignVCenter, "21 hand points + YOLO26s pose");
         y += 42;
 
         painter.setPen(QPen(QColor(255, 255, 255, 42), 1));
