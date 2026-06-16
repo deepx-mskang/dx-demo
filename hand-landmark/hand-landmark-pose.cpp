@@ -6,6 +6,7 @@
 #include <QtGui/QLinearGradient>
 #include <QtGui/QImage>
 #include <QtGui/QKeyEvent>
+#include <QtGui/QMouseEvent>
 #include <QtGui/QPainter>
 #include <QtGui/QPen>
 #include <QtWidgets/QApplication>
@@ -24,7 +25,9 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <deque>
 #include <fstream>
+#include <functional>
 #include <iomanip>
 #include <iostream>
 #include <memory>
@@ -33,6 +36,7 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 namespace {
@@ -68,6 +72,11 @@ constexpr float kHandRoiScaleX = 2.6f;
 constexpr float kHandRoiScaleY = 2.6f;
 constexpr float kHandRoiShiftX = 0.0f;
 constexpr float kHandRoiShiftY = -0.5f;
+constexpr std::size_t kFrameQueueDepth = 2;
+constexpr std::size_t kRenderQueueDepth = 3;
+constexpr std::uint64_t kResultHistoryFrames = 90;
+constexpr int kQueuePollMs = 20;
+constexpr int kRenderResultWaitMs = 6;
 
 struct Options {
     std::string palm_model_path = kDefaultPalmModelPath;
@@ -91,6 +100,7 @@ struct Options {
     bool show_palm_overlay = true;
     bool show_pose_overlay = true;
     bool save_output = false;
+    bool show_exit_button = false;
 };
 
 struct Anchor {
@@ -202,6 +212,194 @@ struct PoseJob {
     std::chrono::steady_clock::time_point submit_time;
 };
 
+using FrameId = std::uint64_t;
+
+struct FramePacket {
+    FrameId id = 0;
+    cv::Mat frame;
+    std::chrono::steady_clock::time_point captured_at;
+};
+
+struct PosePacket {
+    FrameId frame_id = 0;
+    std::vector<PoseResult> poses;
+    double inference_ms = 0.0;
+};
+
+struct HandPacket {
+    FrameId frame_id = 0;
+    std::vector<PalmDetection> palms;
+    std::vector<HandLandmarkResult> hands;
+};
+
+struct ResultBundle {
+    bool has_pose = false;
+    bool pose_exact = false;
+    PosePacket pose;
+    bool has_hand = false;
+    bool hand_exact = false;
+    HandPacket hand;
+};
+
+template <typename T>
+class BoundedQueue {
+public:
+    explicit BoundedQueue(std::size_t max_size)
+        : max_size_(std::max<std::size_t>(1, max_size)) {}
+
+    bool push(T item) {
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (closed_) return false;
+            while (items_.size() >= max_size_) {
+                items_.pop_front();
+            }
+            items_.push_back(std::move(item));
+        }
+        cv_.notify_one();
+        return true;
+    }
+
+    bool pop_for(T* out, std::chrono::milliseconds timeout) {
+        std::unique_lock<std::mutex> lock(mutex_);
+        if (!cv_.wait_for(lock, timeout, [this]() { return closed_ || !items_.empty(); })) {
+            return false;
+        }
+        if (items_.empty()) return false;
+        *out = std::move(items_.front());
+        items_.pop_front();
+        return true;
+    }
+
+    void close() {
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            closed_ = true;
+        }
+        cv_.notify_all();
+    }
+
+    bool closed() const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return closed_;
+    }
+
+private:
+    const std::size_t max_size_;
+    mutable std::mutex mutex_;
+    std::condition_variable cv_;
+    std::deque<T> items_;
+    bool closed_ = false;
+};
+
+struct PipelineQueues {
+    BoundedQueue<FramePacket> capture;
+    BoundedQueue<FramePacket> pose;
+    BoundedQueue<FramePacket> hand;
+    BoundedQueue<FramePacket> render;
+
+    PipelineQueues()
+        : capture(kFrameQueueDepth),
+          pose(kFrameQueueDepth),
+          hand(kFrameQueueDepth),
+          render(kRenderQueueDepth) {}
+
+    void close_all() {
+        capture.close();
+        pose.close();
+        hand.close();
+        render.close();
+    }
+};
+
+class ResultStore {
+public:
+    void set_pose(PosePacket packet) {
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            latest_pose_ = packet;
+            has_latest_pose_ = true;
+            pose_results_[packet.frame_id] = std::move(packet);
+        }
+        cv_.notify_all();
+    }
+
+    void set_hand(HandPacket packet) {
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            latest_hand_ = packet;
+            has_latest_hand_ = true;
+            hand_results_[packet.frame_id] = std::move(packet);
+        }
+        cv_.notify_all();
+    }
+
+    ResultBundle wait_for(FrameId frame_id,
+                          bool need_pose,
+                          bool need_hand,
+                          std::chrono::milliseconds timeout) {
+        const auto deadline = std::chrono::steady_clock::now() + timeout;
+        std::unique_lock<std::mutex> lock(mutex_);
+        auto ready = [&]() {
+            return (!need_pose || pose_results_.find(frame_id) != pose_results_.end()) &&
+                   (!need_hand || hand_results_.find(frame_id) != hand_results_.end());
+        };
+        if (!ready()) {
+            cv_.wait_until(lock, deadline, ready);
+        }
+
+        ResultBundle bundle;
+        const auto pose_it = pose_results_.find(frame_id);
+        if (pose_it != pose_results_.end()) {
+            bundle.pose = pose_it->second;
+            bundle.has_pose = true;
+            bundle.pose_exact = true;
+        } else if (has_latest_pose_ && latest_pose_.frame_id <= frame_id) {
+            bundle.pose = latest_pose_;
+            bundle.has_pose = true;
+        }
+
+        const auto hand_it = hand_results_.find(frame_id);
+        if (hand_it != hand_results_.end()) {
+            bundle.hand = hand_it->second;
+            bundle.has_hand = true;
+            bundle.hand_exact = true;
+        } else if (has_latest_hand_ && latest_hand_.frame_id <= frame_id) {
+            bundle.hand = latest_hand_;
+            bundle.has_hand = true;
+        }
+        return bundle;
+    }
+
+    void prune_before(FrameId min_frame_id) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        for (auto it = pose_results_.begin(); it != pose_results_.end();) {
+            if (it->first < min_frame_id) {
+                it = pose_results_.erase(it);
+            } else {
+                ++it;
+            }
+        }
+        for (auto it = hand_results_.begin(); it != hand_results_.end();) {
+            if (it->first < min_frame_id) {
+                it = hand_results_.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    }
+
+private:
+    std::mutex mutex_;
+    std::condition_variable cv_;
+    std::unordered_map<FrameId, PosePacket> pose_results_;
+    std::unordered_map<FrameId, HandPacket> hand_results_;
+    PosePacket latest_pose_;
+    HandPacket latest_hand_;
+    bool has_latest_pose_ = false;
+    bool has_latest_hand_ = false;
+};
+
 bool file_exists(const std::string& path) {
     std::ifstream in(path.c_str(), std::ios::binary);
     return static_cast<bool>(in);
@@ -273,6 +471,7 @@ void print_usage(const char* argv0) {
         << "      --landmark-only         Same as --hide-palm\n"
         << "      --show-pose             Draw pose estimation overlay (default)\n"
         << "      --hide-pose             Hide pose estimation overlay\n"
+        << "      --exit-btn              Show a clickable exit button at the top-right\n"
         << "  -s, --save                  Save rendered result video as output-00.mp4, output-01.mp4, ...\n"
         << "      --windowed              Show a window instead of fullscreen\n"
         << "      --fullscreen            Force fullscreen (default)\n"
@@ -397,6 +596,8 @@ bool parse_args(int argc, char** argv, Options* options) {
             options->show_pose_overlay = true;
         } else if (arg == "--hide-pose") {
             options->show_pose_overlay = false;
+        } else if (arg == "--exit-btn") {
+            options->show_exit_button = true;
         } else if (arg == "-s" || arg == "--save") {
             options->save_output = true;
         } else if (arg == "--windowed") {
@@ -1463,6 +1664,11 @@ public:
         setFocusPolicy(Qt::StrongFocus);
     }
 
+    void setExitButtonVisible(bool visible) {
+        show_exit_button_ = visible;
+        update();
+    }
+
     void setFrame(const QImage& image, const HudMetrics& metrics) {
         frame_ = image;
         metrics_ = metrics;
@@ -1473,15 +1679,19 @@ protected:
     void paintEvent(QPaintEvent*) override {
         QPainter painter(this);
         painter.fillRect(rect(), Qt::black);
-        if (frame_.isNull()) return;
-        QSize target_size = frame_.size();
-        target_size.scale(size(), Qt::KeepAspectRatio);
-        const QPoint top_left(0, (height() - target_size.height()) / 2);
-        painter.drawImage(QRect(top_left, target_size), frame_);
 
-        const QRect panel_rect(target_size.width(), 0,
-                               std::max(0, width() - target_size.width()), height());
-        drawSidePanel(painter, panel_rect);
+        if (!frame_.isNull()) {
+            QSize target_size = frame_.size();
+            target_size.scale(size(), Qt::KeepAspectRatio);
+            const QPoint top_left(0, (height() - target_size.height()) / 2);
+            painter.drawImage(QRect(top_left, target_size), frame_);
+
+            const QRect panel_rect(target_size.width(), 0,
+                                   std::max(0, width() - target_size.width()), height());
+            drawSidePanel(painter, panel_rect);
+        }
+
+        drawExitButton(painter);
     }
 
     void keyPressEvent(QKeyEvent* event) override {
@@ -1496,7 +1706,42 @@ protected:
         QWidget::keyPressEvent(event);
     }
 
+    void mousePressEvent(QMouseEvent* event) override {
+        if (show_exit_button_ && event->button() == Qt::LeftButton &&
+            exitButtonRect().contains(event->pos())) {
+            event->accept();
+            QCoreApplication::quit();
+            return;
+        }
+        QWidget::mousePressEvent(event);
+    }
+
 private:
+    QRect exitButtonRect() const {
+        constexpr int kButtonWidth = 32;
+        constexpr int kButtonHeight = 28;
+        constexpr int kMargin = 14;
+        return QRect(width() - kButtonWidth - kMargin, kMargin, kButtonWidth, kButtonHeight);
+    }
+
+    void drawExitButton(QPainter& painter) const {
+        if (!show_exit_button_) return;
+
+        painter.setRenderHint(QPainter::Antialiasing, true);
+        const QRect r = exitButtonRect();
+
+        painter.setPen(QPen(QColor(60, 60, 60, 180), 1));
+        painter.setBrush(QColor(45, 45, 48, 145));
+        painter.drawRoundedRect(r, 6, 6);
+
+        QFont font = painter.font();
+        font.setPixelSize(13);
+        font.setBold(true);
+        painter.setFont(font);
+        painter.setPen(QColor(204, 204, 204, 170));
+        painter.drawText(r, Qt::AlignCenter, "X");
+    }
+
     void drawMetricCard(QPainter& painter,
                         const QRect& rect,
                         const QString& label,
@@ -1592,6 +1837,7 @@ private:
 
     QImage frame_;
     HudMetrics metrics_;
+    bool show_exit_button_ = false;
 };
 
 class FpsCounter {
@@ -1635,11 +1881,8 @@ cv::Mat center_crop_wide_frame_to_4_3(const cv::Mat& frame) {
     return frame(cv::Rect(x, 0, target_width, frame.rows));
 }
 
-void validate_model_shapes(dxrt::InferenceEngine& palm_engine,
-                           dxrt::InferenceEngine& landmark_engine,
-                           dxrt::InferenceEngine& pose_engine,
-                           int* pose_input_width,
-                           int* pose_input_height) {
+void validate_hand_model_shapes(dxrt::InferenceEngine& palm_engine,
+                                dxrt::InferenceEngine& landmark_engine) {
     const auto palm_input = palm_engine.GetInputs().front();
     const auto palm_shape = palm_input.shape();
     if (palm_shape.size() != 4 || palm_shape[1] != kPalmHeight || palm_shape[2] != kPalmWidth ||
@@ -1653,7 +1896,11 @@ void validate_model_shapes(dxrt::InferenceEngine& palm_engine,
         lm_input.type() != dxrt::DataType::UINT8) {
         throw std::runtime_error("landmark model input must be UINT8 [1,224,224,3]");
     }
+}
 
+void validate_pose_model_shape(dxrt::InferenceEngine& pose_engine,
+                               int* pose_input_width,
+                               int* pose_input_height) {
     const auto pose_input = pose_engine.GetInputs().front();
     int pose_channels = 0;
     parse_model_input_shape(pose_input.shape(), pose_input_width, pose_input_height,
@@ -1664,21 +1911,131 @@ void validate_model_shapes(dxrt::InferenceEngine& palm_engine,
     }
 }
 
-void run_detection_loop(const Options& options, FrameView* view, std::atomic<bool>* running) {
+void stop_pipeline(PipelineQueues* queues, std::atomic<bool>* running) {
+    running->store(false);
+    queues->close_all();
+}
+
+void capture_loop(const Options& options,
+                  cv::VideoCapture* cap,
+                  PipelineQueues* queues,
+                  std::atomic<bool>* running,
+                  bool pace_video,
+                  std::chrono::duration<double> frame_interval) {
     try {
-        dxrt::InferenceEngine palm_engine(options.palm_model_path);
-        dxrt::InferenceEngine landmark_engine(options.landmark_model_path);
+        FrameId next_frame_id = 1;
+        auto next_frame_time = std::chrono::steady_clock::now();
+        while (running->load()) {
+            cv::Mat frame;
+            if (!cap->read(frame) || frame.empty()) {
+                if (!options.use_camera && options.loop_video) {
+                    cap->set(cv::CAP_PROP_POS_FRAMES, 0.0);
+                    continue;
+                }
+                break;
+            }
+
+            FramePacket packet;
+            packet.id = next_frame_id++;
+            packet.frame = center_crop_wide_frame_to_4_3(frame).clone();
+            packet.captured_at = std::chrono::steady_clock::now();
+            queues->capture.push(std::move(packet));
+
+            if (pace_video) {
+                next_frame_time +=
+                    std::chrono::duration_cast<std::chrono::steady_clock::duration>(frame_interval);
+                std::this_thread::sleep_until(next_frame_time);
+                if (next_frame_time < std::chrono::steady_clock::now() - std::chrono::seconds(1)) {
+                    next_frame_time = std::chrono::steady_clock::now();
+                }
+            }
+        }
+        queues->capture.close();
+    } catch (const std::exception& e) {
+        std::cerr << "Capture error: " << e.what() << std::endl;
+        stop_pipeline(queues, running);
+        request_quit_from_worker();
+    }
+}
+
+void dispatch_loop(const Options& options, PipelineQueues* queues, std::atomic<bool>* running) {
+    const auto poll = std::chrono::milliseconds(kQueuePollMs);
+    while (true) {
+        if (!running->load() && !queues->capture.closed()) break;
+
+        FramePacket packet;
+        if (!queues->capture.pop_for(&packet, poll)) {
+            if (queues->capture.closed() || !running->load()) break;
+            continue;
+        }
+
+        if (options.show_pose_overlay) {
+            queues->pose.push(FramePacket{packet.id, packet.frame.clone(), packet.captured_at});
+        }
+        queues->hand.push(FramePacket{packet.id, packet.frame.clone(), packet.captured_at});
+        queues->render.push(std::move(packet));
+    }
+
+    queues->pose.close();
+    queues->hand.close();
+    queues->render.close();
+}
+
+void pose_loop(const Options& options,
+               BoundedQueue<FramePacket>* pose_queue,
+               ResultStore* results,
+               PipelineQueues* queues,
+               std::atomic<bool>* running) {
+    try {
         dxrt::InferenceEngine pose_engine(options.pose_model_path);
         int pose_input_width = 0;
         int pose_input_height = 0;
-        validate_model_shapes(palm_engine, landmark_engine, pose_engine,
-                              &pose_input_width, &pose_input_height);
-        landmark_engine.RegisterCallback([](dxrt::TensorPtrs& outputs, void* user_data) -> int {
-            landmark_callback(outputs, user_data);
-            return 0;
-        });
+        validate_pose_model_shape(pose_engine, &pose_input_width, &pose_input_height);
         pose_engine.RegisterCallback([](dxrt::TensorPtrs& outputs, void* user_data) -> int {
             pose_callback(outputs, user_data);
+            return 0;
+        });
+
+        const auto poll = std::chrono::milliseconds(kQueuePollMs);
+        while (true) {
+            if (!running->load() && !pose_queue->closed()) break;
+
+            FramePacket packet;
+            if (!pose_queue->pop_for(&packet, poll)) {
+                if (pose_queue->closed() || !running->load()) break;
+                continue;
+            }
+
+            double inference_ms = 0.0;
+            std::vector<PoseResult> poses;
+            auto collector = submit_pose_async(pose_engine, packet.frame, pose_input_width,
+                                               pose_input_height, options.pose_confidence,
+                                               options.pose_nms_threshold);
+            poses = wait_pose_result(collector.get(), &inference_ms);
+            results->set_pose(PosePacket{packet.id, std::move(poses), inference_ms});
+        }
+    } catch (const dxrt::Exception& e) {
+        std::cerr << "Pose DXRT error: " << e.what() << std::endl;
+        stop_pipeline(queues, running);
+        request_quit_from_worker();
+    } catch (const std::exception& e) {
+        std::cerr << "Pose error: " << e.what() << std::endl;
+        stop_pipeline(queues, running);
+        request_quit_from_worker();
+    }
+}
+
+void hand_loop(const Options& options,
+               BoundedQueue<FramePacket>* hand_queue,
+               ResultStore* results,
+               PipelineQueues* queues,
+               std::atomic<bool>* running) {
+    try {
+        dxrt::InferenceEngine palm_engine(options.palm_model_path);
+        dxrt::InferenceEngine landmark_engine(options.landmark_model_path);
+        validate_hand_model_shapes(palm_engine, landmark_engine);
+        landmark_engine.RegisterCallback([](dxrt::TensorPtrs& outputs, void* user_data) -> int {
+            landmark_callback(outputs, user_data);
             return 0;
         });
 
@@ -1687,6 +2044,117 @@ void run_detection_loop(const Options& options, FrameView* view, std::atomic<boo
             throw std::runtime_error("internal palm anchor generation failed");
         }
 
+        const auto poll = std::chrono::milliseconds(kQueuePollMs);
+        while (true) {
+            if (!running->load() && !hand_queue->closed()) break;
+
+            FramePacket packet;
+            if (!hand_queue->pop_for(&packet, poll)) {
+                if (hand_queue->closed() || !running->load()) break;
+                continue;
+            }
+
+            PreprocessInfo prep;
+            std::vector<std::uint8_t> palm_input =
+                preprocess_palm_frame(packet.frame, options.keep_aspect, &prep);
+            auto palm_outputs = palm_engine.Run(palm_input.data());
+            std::vector<PalmDetection> palms =
+                decode_palm_detections(palm_outputs, anchors, prep, packet.frame.size(),
+                                       options.palm_confidence, options.nms_threshold,
+                                       options.max_hands);
+            std::vector<HandLandmarkResult> hands =
+                run_landmark_async(landmark_engine, packet.frame, palms,
+                                   options.landmark_confidence);
+            results->set_hand(HandPacket{packet.id, std::move(palms), std::move(hands)});
+        }
+    } catch (const dxrt::Exception& e) {
+        std::cerr << "Hand DXRT error: " << e.what() << std::endl;
+        stop_pipeline(queues, running);
+        request_quit_from_worker();
+    } catch (const std::exception& e) {
+        std::cerr << "Hand error: " << e.what() << std::endl;
+        stop_pipeline(queues, running);
+        request_quit_from_worker();
+    }
+}
+
+void render_loop(const Options& options,
+                 FrameView* view,
+                 BoundedQueue<FramePacket>* render_queue,
+                 ResultStore* results,
+                 PipelineQueues* queues,
+                 std::atomic<bool>* running,
+                 double output_fps,
+                 const std::string& output_path) {
+    try {
+        FpsCounter fps_counter;
+        cv::VideoWriter output_writer;
+        const auto poll = std::chrono::milliseconds(kQueuePollMs);
+        const auto result_wait = std::chrono::milliseconds(kRenderResultWaitMs);
+
+        while (true) {
+            if (!running->load() && !render_queue->closed()) break;
+
+            FramePacket packet;
+            if (!render_queue->pop_for(&packet, poll)) {
+                if (render_queue->closed() || !running->load()) break;
+                continue;
+            }
+
+            ResultBundle bundle =
+                results->wait_for(packet.id, options.show_pose_overlay, true, result_wait);
+
+            std::vector<PalmDetection> palms;
+            std::vector<HandLandmarkResult> hands;
+            if (bundle.has_hand) {
+                palms = bundle.hand.palms;
+                hands = bundle.hand.hands;
+            }
+
+            std::vector<PoseResult> poses;
+            double pose_ms = 0.0;
+            if (options.show_pose_overlay && bundle.has_pose) {
+                poses = bundle.pose.poses;
+                pose_ms = bundle.pose.inference_ms;
+            }
+
+            const double fps = fps_counter.update();
+            HudMetrics metrics;
+            metrics.hand_count = hands.size();
+            metrics.palm_count = palms.size();
+            metrics.pose_count = poses.size();
+            metrics.fps = fps;
+            metrics.pose_ms = pose_ms;
+            metrics.max_hands = options.max_hands;
+            metrics.show_palm_overlay = options.show_palm_overlay;
+            metrics.show_pose_overlay = options.show_pose_overlay;
+            draw_results(packet.frame, palms, hands, poses, options.show_palm_overlay);
+            if (options.save_output) {
+                if (!output_writer.isOpened()) {
+                    output_writer.open(output_path,
+                                       cv::VideoWriter::fourcc('m', 'p', '4', 'v'),
+                                       output_fps, packet.frame.size(), true);
+                    if (!output_writer.isOpened()) {
+                        throw std::runtime_error("failed to open output video file: " + output_path);
+                    }
+                }
+                output_writer.write(packet.frame);
+            }
+            publish_frame(view, packet.frame, metrics);
+
+            const FrameId keep_from =
+                packet.id > kResultHistoryFrames ? packet.id - kResultHistoryFrames : 0;
+            results->prune_before(keep_from);
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "Render error: " << e.what() << std::endl;
+        stop_pipeline(queues, running);
+        request_quit_from_worker();
+    }
+}
+
+void run_detection_loop(const Options& options, FrameView* view, std::atomic<bool>* running) {
+    try {
         cv::VideoCapture cap;
         if (options.use_camera) {
             cap.open(options.camera_index, cv::CAP_V4L2);
@@ -1707,9 +2175,6 @@ void run_detection_loop(const Options& options, FrameView* view, std::atomic<boo
         const auto frame_interval =
             pace_video ? std::chrono::duration<double>(1.0 / source_fps)
                        : std::chrono::duration<double>(0.0);
-        auto next_frame_time = std::chrono::steady_clock::now();
-        FpsCounter fps_counter;
-        cv::VideoWriter output_writer;
         const std::string output_path = options.save_output ? next_output_video_path() : "";
         const double output_fps = select_output_fps(options, source_fps);
         if (options.save_output) {
@@ -1718,78 +2183,31 @@ void run_detection_loop(const Options& options, FrameView* view, std::atomic<boo
                       << " FPS" << std::endl;
         }
 
-        while (running->load()) {
-            cv::Mat frame;
-            if (!cap.read(frame) || frame.empty()) {
-                if (!options.use_camera && options.loop_video) {
-                    cap.set(cv::CAP_PROP_POS_FRAMES, 0.0);
-                    continue;
-                }
-                break;
-            }
-            frame = center_crop_wide_frame_to_4_3(frame);
+        PipelineQueues queues;
+        ResultStore results;
 
-            std::unique_ptr<PoseCollector> pose_collector;
-            if (options.show_pose_overlay) {
-                pose_collector = submit_pose_async(pose_engine, frame, pose_input_width,
-                                                   pose_input_height,
-                                                   options.pose_confidence,
-                                                   options.pose_nms_threshold);
-            }
-
-            PreprocessInfo prep;
-            std::vector<std::uint8_t> palm_input =
-                preprocess_palm_frame(frame, options.keep_aspect, &prep);
-            auto palm_outputs = palm_engine.Run(palm_input.data());
-            std::vector<PalmDetection> palms =
-                decode_palm_detections(palm_outputs, anchors, prep, frame.size(),
-                                       options.palm_confidence, options.nms_threshold,
-                                       options.max_hands);
-            std::vector<HandLandmarkResult> hands =
-                run_landmark_async(landmark_engine, frame, palms, options.landmark_confidence);
-            double pose_ms = 0.0;
-            std::vector<PoseResult> poses;
-            if (pose_collector) {
-                poses = wait_pose_result(pose_collector.get(), &pose_ms);
-            }
-
-            const double fps = fps_counter.update();
-            HudMetrics metrics;
-            metrics.hand_count = hands.size();
-            metrics.palm_count = palms.size();
-            metrics.pose_count = poses.size();
-            metrics.fps = fps;
-            metrics.pose_ms = pose_ms;
-            metrics.max_hands = options.max_hands;
-            metrics.show_palm_overlay = options.show_palm_overlay;
-            metrics.show_pose_overlay = options.show_pose_overlay;
-            draw_results(frame, palms, hands, poses, options.show_palm_overlay);
-            if (options.save_output) {
-                if (!output_writer.isOpened()) {
-                    output_writer.open(output_path,
-                                       cv::VideoWriter::fourcc('m', 'p', '4', 'v'),
-                                       output_fps, frame.size(), true);
-                    if (!output_writer.isOpened()) {
-                        throw std::runtime_error("failed to open output video file: " + output_path);
-                    }
-                }
-                output_writer.write(frame);
-            }
-            publish_frame(view, frame, metrics);
-
-            if (pace_video) {
-                next_frame_time +=
-                    std::chrono::duration_cast<std::chrono::steady_clock::duration>(frame_interval);
-                std::this_thread::sleep_until(next_frame_time);
-                if (next_frame_time < std::chrono::steady_clock::now() - std::chrono::seconds(1)) {
-                    next_frame_time = std::chrono::steady_clock::now();
-                }
-            }
+        std::thread capture_thread(capture_loop, std::cref(options), &cap, &queues, running,
+                                   pace_video, frame_interval);
+        std::thread dispatch_thread(dispatch_loop, std::cref(options), &queues, running);
+        std::thread hand_thread(hand_loop, std::cref(options), &queues.hand, &results, &queues,
+                                running);
+        std::thread pose_thread;
+        if (options.show_pose_overlay) {
+            pose_thread = std::thread(pose_loop, std::cref(options), &queues.pose, &results,
+                                      &queues, running);
+        } else {
+            queues.pose.close();
         }
+        std::thread render_thread(render_loop, std::cref(options), view, &queues.render,
+                                  &results, &queues, running, output_fps, output_path);
+
+        if (capture_thread.joinable()) capture_thread.join();
+        if (dispatch_thread.joinable()) dispatch_thread.join();
+        if (hand_thread.joinable()) hand_thread.join();
+        if (pose_thread.joinable()) pose_thread.join();
+        if (render_thread.joinable()) render_thread.join();
+
         if (running->load()) request_quit_from_worker();
-    } catch (const dxrt::Exception& e) {
-        std::cerr << "DXRT error: " << e.what() << std::endl;
-        request_quit_from_worker();
     } catch (const std::exception& e) {
         std::cerr << "Error: " << e.what() << std::endl;
         request_quit_from_worker();
@@ -1820,6 +2238,7 @@ int main(int argc, char** argv) {
 
     QApplication app(argc, argv);
     FrameView view;
+    view.setExitButtonVisible(options.show_exit_button);
     if (options.fullscreen) {
         view.showFullScreen();
     } else {
