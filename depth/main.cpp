@@ -1314,6 +1314,10 @@ int main(int argc, char **argv)
                         g_camera_cv.notify_all();
                         break;
                     }
+                    if (!video_input)
+                    {
+                        cv::flip(frame, frame, 1);
+                    }
 
                     {
                         std::unique_lock<std::mutex> lock(g_camera_mutex);
