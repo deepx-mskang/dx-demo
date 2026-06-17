@@ -1937,7 +1937,12 @@ void capture_loop(const Options& options,
 
             FramePacket packet;
             packet.id = next_frame_id++;
-            packet.frame = center_crop_wide_frame_to_4_3(frame).clone();
+            const cv::Mat cropped = center_crop_wide_frame_to_4_3(frame);
+            if (options.use_camera) {
+                cv::flip(cropped, packet.frame, 1);
+            } else {
+                packet.frame = cropped.clone();
+            }
             packet.captured_at = std::chrono::steady_clock::now();
             queues->capture.push(std::move(packet));
 
