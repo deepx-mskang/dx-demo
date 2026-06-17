@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.14)
-project(cam_ppocr_v6_cpp_demo DESCRIPTION "DEEPX PP-OCRv6 Qt5 C++ demo")
+project(cam_ppocr_v6_demo DESCRIPTION "DEEPX PP-OCRv6 Qt5 C++ demo")
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -17,7 +17,7 @@ else()
     set(DXRT_LIB dxrt)
 endif()
 
-get_filename_component(CAM_OCR_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/.." ABSOLUTE)
+get_filename_component(CAM_OCR_ROOT "${CMAKE_CURRENT_SOURCE_DIR}" ABSOLUTE)
 
 add_executable(cam_ppocr_v6_demo
     main.cpp

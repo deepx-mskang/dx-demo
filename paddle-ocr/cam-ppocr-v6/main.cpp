@@ -401,11 +401,6 @@ QString fontPathForLanguage(const fs::path& root)
         return QString::fromStdString(v6AssetFontPath.string());
     }
 
-    const fs::path defaultFontPath = root / "cpp" / "assets" / "NotoSansJP-VariableFont_wght.ttf";
-    if (fs::exists(defaultFontPath)) {
-        return QString::fromStdString(defaultFontPath.string());
-    }
-
     fs::path fontPath = root / "engine" / "fonts" / "NotoSansJP-VariableFont_wght.ttf";
     if (fs::exists(fontPath)) {
         return QString::fromStdString(fontPath.string());
