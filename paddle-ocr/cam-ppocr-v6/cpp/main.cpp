@@ -62,6 +62,7 @@ struct CameraConfig {
     int deviceIndex = 0;
     int width = 1280;
     int height = 720;
+    int cropSize = 640;
     double fps = 15.0;
 };
 
@@ -446,7 +447,7 @@ cv::Mat makeRightDisplayImage(
 
     constexpr int kPositionSnap = 4;
     constexpr int kFontSizeSnap = 2;
-    constexpr int kMinReadableFontPixels = 15;
+    constexpr int kMinReadableFontPixels = 16;
     constexpr double kFontHeightRatio = 0.86;
     constexpr double kMinHorizontalTextScale = 0.72;
     constexpr double kSizeHysteresisRatio = 0.15;
@@ -786,7 +787,7 @@ protected:
             }
 
             if (!useVideo) {
-                frame = centerCropToSize(frame, 640);
+                frame = centerCropToSize(frame, cameraConfig_.cropSize);
             }
 
             if (sharpnessEnabled_.load()) {
@@ -1640,6 +1641,7 @@ struct Args {
     CameraConfig camera;
     SharpnessMode sharpnessMode = SharpnessMode::Medium;
     bool enableSharpness = false;
+    bool highAccuracy = false;
     bool showExitButton = false;
     int recAsyncQueueSize = camocr::kRecAsyncQueueDefault;
 };
@@ -1716,15 +1718,19 @@ void printUsage()
         << "Usage: cam_ppocr_v6_demo [--video PATH] [--camera N] [--resolution WIDTHxHEIGHT]\n"
         << "                    [--width W --height H] [--fps FPS]\n"
         << "                    [--rec-queue-size N]\n"
+        << "                    [--high-accuracy]\n"
         << "                    [--enable-sharpness] [--sharpness off|soft|medium|strong]\n"
         << "                    [--exit-btn]\n"
         << "Defaults: sharpness is off. GUI checkbox toggles the selected sharpness mode,\n"
-        << "and `--enable-sharpness` uses the default `medium` mode.\n";
+        << "and `--enable-sharpness` uses the default `medium` mode.\n"
+        << "--high-accuracy requests 1920x1080 camera input, center-crops to 960x960,\n"
+        << "and uses det_v6_m_960.dxnn. The GUI preview remains 640x640.\n";
 }
 
 Args parseArgs(const QStringList& args)
 {
     Args parsed;
+    bool cameraResolutionExplicit = false;
     for (int i = 1; i < args.size(); ++i) {
         const QString arg = args[i];
         if ((arg == "-v" || arg == "--video") && i + 1 < args.size()) {
@@ -1733,10 +1739,13 @@ Args parseArgs(const QStringList& args)
             parsed.camera.deviceIndex = parseNonNegativeInt(args[++i], "--camera");
         } else if ((arg == "-r" || arg == "--resolution") && i + 1 < args.size()) {
             parseResolution(args[++i], &parsed.camera);
+            cameraResolutionExplicit = true;
         } else if (arg == "--width" && i + 1 < args.size()) {
             parsed.camera.width = parsePositiveInt(args[++i], "--width");
+            cameraResolutionExplicit = true;
         } else if (arg == "--height" && i + 1 < args.size()) {
             parsed.camera.height = parsePositiveInt(args[++i], "--height");
+            cameraResolutionExplicit = true;
         } else if (arg == "--fps" && i + 1 < args.size()) {
             parsed.camera.fps = parsePositiveDouble(args[++i], "--fps");
         } else if ((arg == "--rec-queue-size" || arg == "--rec-async-queue") && i + 1 < args.size()) {
@@ -1754,6 +1763,8 @@ Args parseArgs(const QStringList& args)
             } else {
                 parsed.enableSharpness = true;
             }
+        } else if (arg == "--high-accuracy") {
+            parsed.highAccuracy = true;
         } else if (arg == "--hide-preview") {
             continue;
         } else if (arg == "--exit-btn") {
@@ -1765,6 +1776,14 @@ Args parseArgs(const QStringList& args)
             std::cerr << "Unknown or incomplete option: " << arg.toStdString() << std::endl;
             printUsage();
             std::exit(2);
+        }
+    }
+
+    if (parsed.highAccuracy) {
+        parsed.camera.cropSize = 960;
+        if (!cameraResolutionExplicit) {
+            parsed.camera.width = 1920;
+            parsed.camera.height = 1080;
         }
     }
 
@@ -1785,14 +1804,19 @@ int main(int argc, char** argv)
     }
 
     std::cout << "PP-OCRv6 selected. Detection and recognition only." << std::endl;
-    std::cout << "PP-OCRv6 default detection model: det_v6_m_640.dxnn" << std::endl;
 
     const fs::path root = defaultRoot();
     const fs::path assetsDir = defaultModelsBaseDir(root);
     camocr::EngineOptions options;
     options.rootDir = root;
     options.assetsDir = assetsDir;
+    if (args.highAccuracy) {
+        options.detModelName = "det_v6_m_960.dxnn";
+    }
     std::cout << "Assets directory: " << assetsDir.string() << std::endl;
+    std::cout << "Detection model: " << options.detModelName << std::endl;
+    std::cout << "Input crop size: " << args.camera.cropSize << "x" << args.camera.cropSize
+              << (args.highAccuracy ? " (high accuracy)" : "") << std::endl;
     options.recAsyncQueueSize = args.recAsyncQueueSize;
     std::cout << "Sharpness mode: " << sharpnessModeName(args.sharpnessMode)
               << ", enabled: " << (args.enableSharpness ? "yes" : "no") << std::endl;

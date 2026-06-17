@@ -27,7 +27,7 @@ constexpr double kDetBoxThresh = 0.6;
 
 // 검출된 텍스트 윤곽선을 바깥쪽으로 얼마나 확장할지 정하는 비율입니다.
 // 텍스트 영역을 조금 넉넉하게 감싸도록 만드는 값입니다.
-constexpr double kDetUnclipRatio = 1.4;
+constexpr double kDetUnclipRatio = 1.5;
 
 // 검출 후처리에서 최대 몇 개의 후보 contour를 검사할지 제한하는 값입니다.
 // 속도와 안정성을 위한 상한입니다.
@@ -222,13 +222,12 @@ fs::path PaddleOcrEngine::resolveRoot(const fs::path& requested)
 
 fs::path PaddleOcrEngine::resolveDictPath() const
 {
-    //return assetsDir_ / "ppocrv6_dict.txt";
-    return assetsDir_ / "rec_char_dict_medium.txt";
+    return assetsDir_ / "ppocrv6_dict.txt";
 }
 
 std::string PaddleOcrEngine::recModelFilename(int ratio)
 {
-    return "rec_v6_m_ratio_" + std::to_string(ratio) + ".dxnn";
+    return "rec_fixed_v6_ratio_" + std::to_string(ratio) + ".dxnn";
 }
 
 fs::path PaddleOcrEngine::resolveRecModelPath(int ratio) const
@@ -253,7 +252,7 @@ void PaddleOcrEngine::loadModels()
 {
     detModelPath_ = assetsDir_ / detModelName_;
 
-    for (int ratio : {5, 15, 25}) {
+    for (int ratio : {1, 3, 5, 10, 15, 25, 35}) {
         recModelPaths_[ratio] = resolveRecModelPath(ratio);
     }
 
@@ -277,6 +276,12 @@ void PaddleOcrEngine::loadModels()
     for (const auto& [ratio, path] : recModelPaths_) {
         std::cout << "[OCR]   rec: " << path.filename().string() << std::endl;
         recModels_[ratio] = loadEngine(path, recAsyncQueueSize_);
+        const ModelInputShape shape = getModelInputShape(*recModels_[ratio]);
+        recModelAspectRatios_[ratio] =
+            shape.height > 0 ? static_cast<double>(shape.width) / static_cast<double>(shape.height)
+                             : static_cast<double>(ratio);
+        std::cout << "[OCR]        input: " << shape.height << "x" << shape.width
+                  << " (max bbox ratio " << recModelAspectRatios_[ratio] << ")" << std::endl;
     }
 
     setupDetAsyncCallbacks();
@@ -514,12 +519,55 @@ cv::Mat PaddleOcrEngine::preprocessDocument(const cv::Mat& bgrImage)
     return bgrImage.clone();
 }
 
-int PaddleOcrEngine::routeRecognition(int width, int height)
+int PaddleOcrEngine::routeRecognition(double aspectRatio) const
 {
-    const double ratio = height > 0 ? static_cast<double>(width) / static_cast<double>(height) : 1000.0;
-    if (ratio <= 5.0) return 5;
-    if (ratio <= 15.0) return 15;
-    return 25;
+    int selectedRatio = -1;
+    double selectedCapacity = 1e9;
+    int widestRatio = -1;
+    double widestCapacity = -1.0;
+
+    for (const auto& [ratio, capacity] : recModelAspectRatios_) {
+        if (capacity <= 0.0) {
+            continue;
+        }
+        if (capacity > widestCapacity) {
+            widestCapacity = capacity;
+            widestRatio = ratio;
+        }
+        if (aspectRatio <= capacity + 1e-6 && capacity < selectedCapacity) {
+            selectedCapacity = capacity;
+            selectedRatio = ratio;
+        }
+    }
+
+    if (selectedRatio >= 0) {
+        return selectedRatio;
+    }
+    if (widestRatio >= 0) {
+        return widestRatio;
+    }
+
+    if (aspectRatio <= 1.0) return 1;
+    if (aspectRatio <= 2.5) return 3;
+    if (aspectRatio <= 5.0) return 5;
+    if (aspectRatio <= 10.0) return 10;
+    if (aspectRatio <= 15.0) return 15;
+    if (aspectRatio <= 25.0) return 25;
+    return 35;
+}
+
+double PaddleOcrEngine::boxAspectRatio(const std::vector<cv::Point2f>& box)
+{
+    if (box.size() != 4) {
+        return 1000.0;
+    }
+
+    const double width = std::max(cv::norm(box[1] - box[0]), cv::norm(box[2] - box[3]));
+    const double height = std::max(cv::norm(box[3] - box[0]), cv::norm(box[2] - box[1]));
+    if (height <= 1e-6) {
+        return 1000.0;
+    }
+    return width / height;
 }
 
 cv::Mat PaddleOcrEngine::resizePpocr(const cv::Mat& image, int targetHeight, int targetWidth, PaddingInfo* paddingInfo)
@@ -676,7 +724,10 @@ std::vector<OcrText> PaddleOcrEngine::recognize(
             continue;
         }
 
-        const int ratio = routeRecognition(crops[i].cols, crops[i].rows);
+        const double aspectRatio = i < boxes.size()
+            ? boxAspectRatio(boxes[i])
+            : (crops[i].rows > 0 ? static_cast<double>(crops[i].cols) / static_cast<double>(crops[i].rows) : 1000.0);
+        const int ratio = routeRecognition(aspectRatio);
         auto& engine = recEngine(ratio);
         const ModelInputShape modelShape = getModelInputShape(engine);
         cv::Mat input = resizePpocr(crops[i], modelShape.height, modelShape.width, nullptr);

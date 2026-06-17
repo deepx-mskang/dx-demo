@@ -75,6 +75,7 @@ private:
     std::map<int, std::filesystem::path> recModelPaths_;
     std::unique_ptr<dxrt::InferenceEngine> detModel_;
     std::map<int, std::unique_ptr<dxrt::InferenceEngine>> recModels_;
+    std::map<int, double> recModelAspectRatios_;
     std::vector<std::string> characters_;
     std::mutex detInflightMutex_;
     std::condition_variable detInflightCv_;
@@ -120,7 +121,8 @@ private:
         const std::string& modelName);
     static dxrt::TensorPtrs runInference(dxrt::InferenceEngine& engine, const cv::Mat& input, const char* stage);
 
-    static int routeRecognition(int width, int height);
+    int routeRecognition(double aspectRatio) const;
+    static double boxAspectRatio(const std::vector<cv::Point2f>& box);
     static cv::Mat resizePpocr(const cv::Mat& image, int targetHeight, int targetWidth, PaddingInfo* paddingInfo);
     static cv::Mat resizeDefault(const cv::Mat& image, int targetHeight, int targetWidth);
     static cv::Mat rotateIfVertical(const cv::Mat& crop);
