@@ -61,6 +61,7 @@ struct Options
     std::string camera_fourcc;
     bool side_by_side = false;
     bool no_ui = false;
+    bool show_exit_button = false;
 };
 
 struct CameraPacket
@@ -79,6 +80,13 @@ struct DepthResult
 std::mutex g_camera_mutex;
 std::condition_variable g_camera_cv;
 CameraPacket g_latest_camera;
+
+struct ExitButtonState
+{
+    std::mutex mutex;
+    cv::Rect rect;
+    std::atomic<bool> *stop_requested = nullptr;
+};
 
 std::string basename_of(const std::string &path)
 {
@@ -170,6 +178,7 @@ void print_usage(const char *argv0)
         << "      --camera-buffer-size <N>\n"
         << "                              Set OpenCV camera buffer size when N > 0\n"
         << "      --camera-fourcc CODE    Request camera pixel format, e.g. MJPG or YUYV\n"
+        << "      --exit-btn              Show a small clickable exit button at the top-right\n"
         << "      --no-ui                 Disable window rendering and UI overlays\n"
         << "  -h, --help                  Show this help\n";
 }
@@ -297,6 +306,10 @@ bool parse_args(int argc, char **argv, Options *options)
         else if (arg == "--no-ui")
         {
             options->no_ui = true;
+        }
+        else if (arg == "--exit-btn")
+        {
+            options->show_exit_button = true;
         }
         else if (arg == "-h" || arg == "--help")
         {
@@ -488,8 +501,9 @@ void place_fps_overlay_sprite(OverlaySprite *sprite, const cv::Size &frame_size)
         return;
     }
     const int margin = 15;
-    sprite->anchor.x = std::max(0, frame_size.width - sprite->image.cols - margin);
-    sprite->anchor.y = std::max(0, margin);
+    (void)frame_size;
+    sprite->anchor.x = margin;
+    sprite->anchor.y = margin;
 }
 
 OverlaySprite make_model_overlay_sprite(const std::string &model_path)
@@ -518,6 +532,127 @@ void place_model_overlay_sprite(OverlaySprite *sprite, const cv::Size &frame_siz
     const int margin = 12;
     sprite->anchor.x = std::max(margin, (frame_size.width - sprite->image.cols) / 2);
     sprite->anchor.y = margin;
+}
+
+void set_exit_button_rect(ExitButtonState *state, const cv::Rect &rect)
+{
+    if (state == nullptr)
+    {
+        return;
+    }
+
+    std::lock_guard<std::mutex> lock(state->mutex);
+    state->rect = rect;
+}
+
+cv::Rect exit_button_rect_for_frame(const cv::Size &frame_size)
+{
+    constexpr int kButtonWidth = 32;
+    constexpr int kButtonHeight = 28;
+    constexpr int kMargin = 14;
+    const int x = std::max(0, frame_size.width - kButtonWidth - kMargin);
+    const int y = std::max(0, kMargin);
+    return cv::Rect(x, y, kButtonWidth, kButtonHeight);
+}
+
+void draw_rounded_rect(cv::Mat &image,
+                       const cv::Rect &rect,
+                       int radius,
+                       const cv::Scalar &color,
+                       int thickness)
+{
+    if (image.empty() || rect.width <= 0 || rect.height <= 0)
+    {
+        return;
+    }
+
+    const int r = std::max(0, std::min(radius, std::min(rect.width, rect.height) / 2));
+    if (r == 0)
+    {
+        cv::rectangle(image, rect, color, thickness, cv::LINE_AA);
+        return;
+    }
+
+    if (thickness < 0)
+    {
+        cv::rectangle(image, cv::Rect(rect.x + r, rect.y, rect.width - 2 * r, rect.height),
+                      color, cv::FILLED, cv::LINE_AA);
+        cv::rectangle(image, cv::Rect(rect.x, rect.y + r, rect.width, rect.height - 2 * r),
+                      color, cv::FILLED, cv::LINE_AA);
+        cv::circle(image, cv::Point(rect.x + r, rect.y + r), r, color, cv::FILLED, cv::LINE_AA);
+        cv::circle(image, cv::Point(rect.x + rect.width - r - 1, rect.y + r), r, color, cv::FILLED, cv::LINE_AA);
+        cv::circle(image, cv::Point(rect.x + r, rect.y + rect.height - r - 1), r, color, cv::FILLED, cv::LINE_AA);
+        cv::circle(image, cv::Point(rect.x + rect.width - r - 1, rect.y + rect.height - r - 1),
+                   r, color, cv::FILLED, cv::LINE_AA);
+        return;
+    }
+
+    cv::line(image, cv::Point(rect.x + r, rect.y), cv::Point(rect.x + rect.width - r, rect.y),
+             color, thickness, cv::LINE_AA);
+    cv::line(image, cv::Point(rect.x + r, rect.y + rect.height - 1),
+             cv::Point(rect.x + rect.width - r, rect.y + rect.height - 1),
+             color, thickness, cv::LINE_AA);
+    cv::line(image, cv::Point(rect.x, rect.y + r), cv::Point(rect.x, rect.y + rect.height - r),
+             color, thickness, cv::LINE_AA);
+    cv::line(image, cv::Point(rect.x + rect.width - 1, rect.y + r),
+             cv::Point(rect.x + rect.width - 1, rect.y + rect.height - r),
+             color, thickness, cv::LINE_AA);
+    cv::ellipse(image, cv::Point(rect.x + r, rect.y + r), cv::Size(r, r),
+                180.0, 0.0, 90.0, color, thickness, cv::LINE_AA);
+    cv::ellipse(image, cv::Point(rect.x + rect.width - r - 1, rect.y + r), cv::Size(r, r),
+                270.0, 0.0, 90.0, color, thickness, cv::LINE_AA);
+    cv::ellipse(image, cv::Point(rect.x + rect.width - r - 1, rect.y + rect.height - r - 1), cv::Size(r, r),
+                0.0, 0.0, 90.0, color, thickness, cv::LINE_AA);
+    cv::ellipse(image, cv::Point(rect.x + r, rect.y + rect.height - r - 1), cv::Size(r, r),
+                90.0, 0.0, 90.0, color, thickness, cv::LINE_AA);
+}
+
+void draw_exit_button(cv::Mat &frame, ExitButtonState *state)
+{
+    if (frame.empty())
+    {
+        return;
+    }
+
+    const cv::Rect rect = exit_button_rect_for_frame(frame.size());
+    set_exit_button_rect(state, rect);
+
+    const cv::Scalar bg(48, 45, 45);
+    const cv::Scalar border(60, 60, 60);
+    const cv::Scalar text(204, 204, 204);
+
+    draw_rounded_rect(frame, rect, 6, bg, cv::FILLED);
+    draw_rounded_rect(frame, rect, 6, border, 1);
+
+    const int font = cv::FONT_HERSHEY_SIMPLEX;
+    const double scale = 0.45;
+    const int thickness = 1;
+    int baseline = 0;
+    const cv::Size text_size = cv::getTextSize("X", font, scale, thickness, &baseline);
+    const cv::Point origin(rect.x + (rect.width - text_size.width) / 2,
+                           rect.y + (rect.height + text_size.height) / 2 - 1);
+    cv::putText(frame, "X", origin, font, scale, text, thickness, cv::LINE_AA);
+}
+
+void on_mouse_event(int event, int x, int y, int, void *userdata)
+{
+    if (event != cv::EVENT_LBUTTONDOWN || userdata == nullptr)
+    {
+        return;
+    }
+
+    auto *state = static_cast<ExitButtonState *>(userdata);
+    cv::Rect rect;
+    {
+        std::lock_guard<std::mutex> lock(state->mutex);
+        rect = state->rect;
+    }
+
+    if (rect.contains(cv::Point(x, y)) && state->stop_requested != nullptr)
+    {
+        state->stop_requested->store(true, std::memory_order_relaxed);
+        g_camera_cv.notify_all();
+    }
 }
 
 int64_t shape_dim(const std::vector<int64_t> &shape, std::size_t index, int64_t fallback)
@@ -554,11 +689,17 @@ public:
         {
             dxrt::InferenceOption option;
 
+#if defined(DXRT_NFH_ACCELERATION_AVAILABLE) || defined(DXRT_CPU_OP_ACCELERATION_AVAILABLE)
             auto& config = dxrt::Configuration::GetInstance();
+#ifdef DXRT_NFH_ACCELERATION_AVAILABLE
             config.SetEnable(dxrt::Configuration::ITEM::NFH_ACCELERATION, true);
+#endif
+#ifdef DXRT_CPU_OP_ACCELERATION_AVAILABLE
             config.SetEnable(dxrt::Configuration::ITEM::CPU_OP_ACCELERATION, true);
+#endif
+#endif
 
-	    engine_.reset(new dxrt::InferenceEngine(model_path, option));
+            engine_.reset(new dxrt::InferenceEngine(model_path, option));
         }
         catch (const std::exception &e)
         {
@@ -1108,7 +1249,9 @@ int main(int argc, char **argv)
             model_overlay_sprite = make_model_overlay_sprite(options.model_path);
         }
 
-        std::cout << "Start Async Processing. Press 'q' or ESC to exit." << std::endl;
+        std::cout << "Start Async Processing. Press 'q' or ESC"
+                  << (options.show_exit_button && !options.no_ui ? " or click the exit button" : "")
+                  << " to exit." << std::endl;
         if (options.no_ui)
         {
             std::cout << "UI disabled. Use Ctrl+C to stop." << std::endl;
@@ -1123,8 +1266,15 @@ int main(int argc, char **argv)
         bool launcher_ready = false;
         std::atomic<bool> stop_requested(false);
         std::atomic<bool> source_finished(false);
+        ExitButtonState exit_button_state;
+        exit_button_state.stop_requested = &stop_requested;
         std::exception_ptr capture_error = nullptr;
         std::exception_ptr inference_error = nullptr;
+
+        if (!options.no_ui && options.show_exit_button)
+        {
+            cv::setMouseCallback(kWindowName, on_mouse_event, &exit_button_state);
+        }
 
         std::thread capture_thread([&]() {
             try
@@ -1280,6 +1430,10 @@ int main(int argc, char **argv)
                         {
                             place_model_overlay_sprite(&model_overlay_sprite.value(), frame_show.size());
                             blend_overlay_sprite(frame_show, model_overlay_sprite.value());
+                        }
+                        if (options.show_exit_button)
+                        {
+                            draw_exit_button(frame_show, &exit_button_state);
                         }
 
                         cv::imshow(kWindowName, frame_show);
