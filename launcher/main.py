@@ -225,6 +225,7 @@ LAUNCHER_ITEMS = [
         "video_script": "../scripts/run_dxtop.sh",
         "camera_script": "../scripts/kill_perf.sh",
         "camera_loading_sec": 0,
+        "extra_buttons": [{"label": "Kill All", "script": "../scripts/kill_all.sh"}],
     },
 ]
 
