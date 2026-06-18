@@ -4,6 +4,4 @@
 
 cd ~/dx-demos/yolo26
 
-source ../.venv-pyqt5/bin/activate
-
-python3 GUI_yolo26_all.py --video ~/Videos/CLIP-demo.mp4
+./yolo26s_3/build/yolo26s_3 --video ~/Videos/dance-960-540.mp4
