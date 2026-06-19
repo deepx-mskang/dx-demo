@@ -5,7 +5,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(OpenCV REQUIRED)
-find_package(Qt5 REQUIRED COMPONENTS Widgets)
+find_package(Qt5 COMPONENTS Widgets)
 
 if(CROSS_COMPILE OR MSVC)
     find_library(DXRT_LIB dxrt HINTS ${DXRT_INSTALLED_DIR}/lib REQUIRED)
@@ -35,30 +35,30 @@ find_library(ONNXRUNTIME_LIB
         /usr/lib/x86_64-linux-gnu
 )
 
-if(NOT ONNXRUNTIME_INCLUDE_DIR OR NOT ONNXRUNTIME_LIB)
-    message(FATAL_ERROR "ONNX Runtime C++ headers/library not found. Set ONNXRUNTIME_ROOT if installed in a custom path.")
+if(ONNXRUNTIME_INCLUDE_DIR AND ONNXRUNTIME_LIB AND Qt5Widgets_FOUND)
+    add_executable(drone_mixformer
+        main.cpp
+    )
+
+    target_compile_definitions(drone_mixformer PRIVATE
+        DRONE_ROOT_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+    )
+
+    target_include_directories(drone_mixformer PRIVATE
+        ${OpenCV_INCLUDE_DIRS}
+        ${ONNXRUNTIME_INCLUDE_DIR}
+    )
+
+    target_compile_options(drone_mixformer PRIVATE -Wall -Wextra -O3)
+
+    target_link_libraries(drone_mixformer PRIVATE
+        ${OpenCV_LIBS}
+        Qt5::Widgets
+        ${DXRT_LIB}
+        ${ONNXRUNTIME_LIB}
+        pthread
+        dl
+    )
+else()
+    message(WARNING "Skipping drone_mixformer_qt because Qt5 Widgets or ONNX Runtime was not found.")
 endif()
-
-add_executable(drone_mixformer_qt
-    main.cpp
-)
-
-target_compile_definitions(drone_mixformer_qt PRIVATE
-    DRONE_ROOT_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
-)
-
-target_include_directories(drone_mixformer_qt PRIVATE
-    ${OpenCV_INCLUDE_DIRS}
-    ${ONNXRUNTIME_INCLUDE_DIR}
-)
-
-target_compile_options(drone_mixformer PRIVATE -Wall -Wextra -O3)
-
-target_link_libraries(drone_mixformer PRIVATE
-    ${OpenCV_LIBS}
-    Qt5::Widgets
-    ${DXRT_LIB}
-    ${ONNXRUNTIME_LIB}
-    pthread
-    dl
-)

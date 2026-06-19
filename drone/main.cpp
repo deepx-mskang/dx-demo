@@ -32,6 +32,15 @@ namespace {
 
 constexpr int kTemplateSize = 112;
 constexpr int kSearchSize = 224;
+constexpr float kTemplateFactor = 2.0f;
+constexpr float kSearchFactor = 4.5f;
+constexpr int kDefaultUpdateInterval = 200;
+constexpr float kTemplateUpdateThreshold = 0.5f;
+constexpr float kMaxScoreDecay = 1.0f;
+constexpr float kClipMargin = 10.0f;
+constexpr int kExitButtonWidth = 32;
+constexpr int kExitButtonHeight = 28;
+constexpr int kExitButtonMargin = 14;
 
 enum class Backend {
     Onnx,
@@ -44,11 +53,17 @@ struct AppOptions {
     std::string model_path = "mixformer_sim.onnx";
     std::string video_path = "video1.mp4";
     bool full_screen = false;
+    bool show_exit_button = false;
 };
 
 struct TensorOutput {
     std::vector<int64_t> shape;
     std::vector<float> values;
+};
+
+struct CropTensor {
+    std::vector<float> tensor;
+    float resize_factor = 1.0f;
 };
 
 struct InputView {
@@ -85,10 +100,21 @@ std::uint64_t element_count(const std::vector<int64_t>& shape)
     return count;
 }
 
+float sigmoid(float x)
+{
+    if (x >= 0.0f) {
+        const float z = std::exp(-x);
+        return 1.0f / (1.0f + z);
+    }
+    const float z = std::exp(x);
+    return z / (1.0f + z);
+}
+
 void print_usage(const char* argv0)
 {
     std::cout
         << "Usage: " << argv0 << " [--backend onnx|dxnn] --model <PATH> --video <PATH> [--full_screen]\n"
+        << "                 [--exit-btn]\n"
         << "\n"
         << "Example:\n"
         << "  " << argv0 << " --backend dxnn --model assets/mixformer_sim.dxnn --video assets/drone_test.mp4\n";
@@ -127,6 +153,8 @@ AppOptions parse_args(int argc, char** argv)
             options.video_path = require_arg_value(i, argc, argv);
         } else if (arg == "--full_screen") {
             options.full_screen = true;
+        } else if (arg == "--exit-btn") {
+            options.show_exit_button = true;
         } else {
             throw std::runtime_error("unknown argument: " + arg);
         }
@@ -169,49 +197,43 @@ public:
 
     void init(const cv::Mat& image, const cv::Rect2f& init_bbox)
     {
-        center_pos_ = cv::Point2f(init_bbox.x + init_bbox.width * 0.5f,
-                                  init_bbox.y + init_bbox.height * 0.5f);
-        target_sz_ = cv::Size2f(init_bbox.width, init_bbox.height);
+        state_ = init_bbox;
+        frame_id_ = 0;
+        max_pred_score_ = -1.0f;
 
-        const float crop_size = template_crop_size();
-        template_tensor_ = get_subwindow(image, center_pos_, crop_size, kTemplateSize);
+        template_tensor_ = sample_target(image, state_, kTemplateFactor, kTemplateSize).tensor;
         online_template_tensor_ = template_tensor_;
+        online_max_template_tensor_ = template_tensor_;
     }
 
     cv::Rect update(const cv::Mat& image)
     {
-        const float s_z = template_crop_size();
-        const float s_x = s_z * (static_cast<float>(kSearchSize) / kTemplateSize);
-        const float scale_x = static_cast<float>(kSearchSize) / s_x;
+        ++frame_id_;
 
-        if (!std::isfinite(scale_x) || scale_x <= 0.0f) {
-            throw std::runtime_error("invalid tracker scale");
-        }
-
-        std::vector<float> search_tensor = get_subwindow(image, center_pos_, s_x, kSearchSize);
-        const std::vector<TensorOutput> outputs = run(search_tensor);
+        const CropTensor search_crop = sample_target(image, state_, kSearchFactor, kSearchSize);
+        const std::vector<TensorOutput> outputs = run(search_crop.tensor);
 
         std::array<float, 4> pred_box{};
         if (!find_pred_box(outputs, pred_box)) {
             throw std::runtime_error("could not find Bounding Box output with last dimension 4");
         }
+        const float pred_score = find_pred_score(outputs);
 
-        const float cx = pred_box[0] * kSearchSize - static_cast<float>(kSearchSize) * 0.5f;
-        const float cy = pred_box[1] * kSearchSize - static_cast<float>(kSearchSize) * 0.5f;
-        const float w = pred_box[2] * kSearchSize;
-        const float h = pred_box[3] * kSearchSize;
+        for (float& value : pred_box) {
+            value = value * static_cast<float>(kSearchSize) / search_crop.resize_factor;
+        }
 
-        center_pos_.x += cx / scale_x;
-        center_pos_.y += cy / scale_x;
-        target_sz_.width = w / scale_x;
-        target_sz_.height = h / scale_x;
+        state_ = clip_box(map_box_back(pred_box, search_crop.resize_factor),
+                          image.rows,
+                          image.cols,
+                          kClipMargin);
 
-        const float track_x = center_pos_.x - target_sz_.width * 0.5f;
-        const float track_y = center_pos_.y - target_sz_.height * 0.5f;
-        return cv::Rect(static_cast<int>(track_x),
-                        static_cast<int>(track_y),
-                        static_cast<int>(target_sz_.width),
-                        static_cast<int>(target_sz_.height));
+        update_online_template(image, pred_score);
+
+        return cv::Rect(static_cast<int>(state_.x),
+                        static_cast<int>(state_.y),
+                        static_cast<int>(state_.width),
+                        static_cast<int>(state_.height));
     }
 
 private:
@@ -286,80 +308,131 @@ private:
         }
     }
 
-    float template_crop_size() const
-    {
-        const float context_amount = 0.5f;
-        const float target_sum = target_sz_.width + target_sz_.height;
-        const float wc_z = target_sz_.width + context_amount * target_sum;
-        const float hc_z = target_sz_.height + context_amount * target_sum;
-        const float area = wc_z * hc_z;
-        if (!std::isfinite(area) || area <= 0.0f) {
-            throw std::runtime_error("invalid target size");
-        }
-        return std::max(1.0f, std::round(std::sqrt(area)));
-    }
-
-    std::vector<float> get_subwindow(const cv::Mat& image,
-                                     const cv::Point2f& center,
-                                     float original_size,
-                                     int resize_size) const
+    CropTensor sample_target(const cv::Mat& image,
+                             const cv::Rect2f& target_box,
+                             float search_area_factor,
+                             int output_size) const
     {
         if (image.empty()) {
             throw std::runtime_error("empty image");
         }
+        if (target_box.width <= 0.0f || target_box.height <= 0.0f) {
+            throw std::runtime_error("too small bounding box");
+        }
 
-        int x1 = static_cast<int>(std::round(center.x - original_size * 0.5f));
-        int y1 = static_cast<int>(std::round(center.y - original_size * 0.5f));
-        int x2 = static_cast<int>(std::round(center.x + original_size * 0.5f));
-        int y2 = static_cast<int>(std::round(center.y + original_size * 0.5f));
+        const int crop_size = static_cast<int>(
+            std::ceil(std::sqrt(target_box.width * target_box.height) * search_area_factor));
+        if (crop_size < 1) {
+            throw std::runtime_error("too small bounding box");
+        }
+
+        const int x1 = static_cast<int>(
+            std::round(target_box.x + 0.5f * target_box.width - 0.5f * crop_size));
+        const int y1 = static_cast<int>(
+            std::round(target_box.y + 0.5f * target_box.height - 0.5f * crop_size));
+        const int x2 = x1 + crop_size;
+        const int y2 = y1 + crop_size;
 
         const int pad_left = std::max(0, -x1);
         const int pad_top = std::max(0, -y1);
-        const int pad_right = std::max(0, x2 - image.cols);
-        const int pad_bottom = std::max(0, y2 - image.rows);
+        const int pad_right = std::max(0, x2 - image.cols + 1);
+        const int pad_bottom = std::max(0, y2 - image.rows + 1);
 
-        cv::Mat work = image;
-        if (pad_left > 0 || pad_top > 0 || pad_right > 0 || pad_bottom > 0) {
-            cv::Mat padded;
-            const cv::Scalar avg_color = cv::mean(image);
-            cv::copyMakeBorder(image, padded, pad_top, pad_bottom, pad_left, pad_right,
-                               cv::BORDER_CONSTANT, avg_color);
-            work = padded;
-            x1 += pad_left;
-            x2 += pad_left;
-            y1 += pad_top;
-            y2 += pad_top;
-        }
+        const int crop_x1 = x1 + pad_left;
+        const int crop_y1 = y1 + pad_top;
+        const int crop_x2 = x2 - pad_right;
+        const int crop_y2 = y2 - pad_bottom;
 
-        cv::Rect roi(x1, y1, std::max(1, x2 - x1), std::max(1, y2 - y1));
-        roi &= cv::Rect(0, 0, work.cols, work.rows);
-        if (roi.empty()) {
+        const int roi_x = std::clamp(crop_x1, 0, image.cols);
+        const int roi_y = std::clamp(crop_y1, 0, image.rows);
+        const int roi_right = std::clamp(crop_x2, 0, image.cols);
+        const int roi_bottom = std::clamp(crop_y2, 0, image.rows);
+
+        const cv::Rect roi(roi_x, roi_y, roi_right - roi_x, roi_bottom - roi_y);
+        if (roi.width <= 0 || roi.height <= 0) {
             throw std::runtime_error("empty crop");
         }
 
-        cv::Mat cropped = work(roi);
+        cv::Mat cropped = image(roi);
+        cv::Mat padded;
+        cv::copyMakeBorder(cropped,
+                           padded,
+                           pad_top,
+                           pad_bottom,
+                           pad_left,
+                           pad_right,
+                           cv::BORDER_CONSTANT,
+                           cv::Scalar(0, 0, 0));
+
         cv::Mat resized;
-        cv::resize(cropped, resized, cv::Size(resize_size, resize_size));
+        cv::resize(padded, resized, cv::Size(output_size, output_size));
         cv::cvtColor(resized, resized, cv::COLOR_BGR2RGB);
         resized.convertTo(resized, CV_32FC3, 1.0 / 255.0);
 
-        const std::array<float, 3> mean = {0.485f, 0.456f, 0.406f};
-        const std::array<float, 3> stddev = {0.229f, 0.224f, 0.225f};
-        const int plane_size = resize_size * resize_size;
+        const int plane_size = output_size * output_size;
         std::vector<float> tensor(static_cast<std::size_t>(3 * plane_size));
 
-        for (int y = 0; y < resize_size; ++y) {
+        for (int y = 0; y < output_size; ++y) {
             const auto* row = resized.ptr<cv::Vec3f>(y);
-            for (int x = 0; x < resize_size; ++x) {
-                const int offset = y * resize_size + x;
+            for (int x = 0; x < output_size; ++x) {
+                const int offset = y * output_size + x;
                 for (int c = 0; c < 3; ++c) {
-                    tensor[static_cast<std::size_t>(c * plane_size + offset)] =
-                        (row[x][c] - mean[static_cast<std::size_t>(c)]) /
-                        stddev[static_cast<std::size_t>(c)];
+                    tensor[static_cast<std::size_t>(c * plane_size + offset)] = row[x][c];
                 }
             }
         }
-        return tensor;
+
+        return {std::move(tensor), static_cast<float>(output_size) / crop_size};
+    }
+
+    cv::Rect2f map_box_back(const std::array<float, 4>& pred_box, float resize_factor) const
+    {
+        const float cx_prev = state_.x + 0.5f * state_.width;
+        const float cy_prev = state_.y + 0.5f * state_.height;
+        const float half_side = 0.5f * static_cast<float>(kSearchSize) / resize_factor;
+
+        const float cx_real = pred_box[0] + (cx_prev - half_side);
+        const float cy_real = pred_box[1] + (cy_prev - half_side);
+        return cv::Rect2f(cx_real - 0.5f * pred_box[2],
+                          cy_real - 0.5f * pred_box[3],
+                          pred_box[2],
+                          pred_box[3]);
+    }
+
+    cv::Rect2f clip_box(const cv::Rect2f& box, int image_h, int image_w, float margin) const
+    {
+        float x1 = box.x;
+        float y1 = box.y;
+        float x2 = box.x + box.width;
+        float y2 = box.y + box.height;
+
+        x1 = std::min(std::max(0.0f, x1), static_cast<float>(image_w) - margin);
+        x2 = std::min(std::max(margin, x2), static_cast<float>(image_w));
+        y1 = std::min(std::max(0.0f, y1), static_cast<float>(image_h) - margin);
+        y2 = std::min(std::max(margin, y2), static_cast<float>(image_h));
+
+        return cv::Rect2f(x1,
+                          y1,
+                          std::max(margin, x2 - x1),
+                          std::max(margin, y2 - y1));
+    }
+
+    void update_online_template(const cv::Mat& image, float pred_score)
+    {
+        if (pred_score >= 0.0f) {
+            max_pred_score_ *= kMaxScoreDecay;
+            if (pred_score > kTemplateUpdateThreshold && pred_score > max_pred_score_) {
+                online_max_template_tensor_ =
+                    sample_target(image, state_, kTemplateFactor, kTemplateSize).tensor;
+                max_pred_score_ = pred_score;
+            }
+        }
+
+        if (frame_id_ > 0 && frame_id_ % kDefaultUpdateInterval == 0) {
+            online_template_tensor_ = online_max_template_tensor_;
+            max_pred_score_ = -1.0f;
+            online_max_template_tensor_ = template_tensor_;
+        }
     }
 
     InputView input_for_name(const std::string& name,
@@ -491,18 +564,43 @@ private:
         for (const auto& output : outputs) {
             const bool shape_matches = !output.shape.empty() && output.shape.back() == 4;
             if ((shape_matches || output.values.size() == 4) && output.values.size() >= 4) {
-                std::copy_n(output.values.begin(), 4, box.begin());
+                const std::size_t box_count = output.values.size() / 4;
+                if (box_count == 0) {
+                    continue;
+                }
+                box = {0.0f, 0.0f, 0.0f, 0.0f};
+                for (std::size_t i = 0; i < box_count; ++i) {
+                    for (std::size_t j = 0; j < box.size(); ++j) {
+                        box[j] += output.values[i * 4 + j];
+                    }
+                }
+                for (float& value : box) {
+                    value /= static_cast<float>(box_count);
+                }
                 return true;
             }
         }
         return false;
     }
 
+    float find_pred_score(const std::vector<TensorOutput>& outputs) const
+    {
+        for (const auto& output : outputs) {
+            const bool is_box_output = !output.shape.empty() && output.shape.back() == 4;
+            if (!is_box_output && output.values.size() == 1) {
+                return sigmoid(output.values.front());
+            }
+        }
+        return -1.0f;
+    }
+
     Backend backend_ = Backend::Onnx;
-    cv::Point2f center_pos_{0.0f, 0.0f};
-    cv::Size2f target_sz_{0.0f, 0.0f};
+    cv::Rect2f state_{0.0f, 0.0f, 0.0f, 0.0f};
+    int frame_id_ = 0;
+    float max_pred_score_ = -1.0f;
     std::vector<float> template_tensor_;
     std::vector<float> online_template_tensor_;
+    std::vector<float> online_max_template_tensor_;
 
     Ort::Env ort_env_;
     Ort::SessionOptions ort_options_;
@@ -569,10 +667,18 @@ protected:
         draw_tracking_overlay(painter, image_rect);
         draw_selection_overlay(painter, image_rect);
         draw_hud(painter, image_rect);
+        draw_exit_button(painter);
     }
 
     void mousePressEvent(QMouseEvent* event) override
     {
+        if (options_.show_exit_button &&
+            event->button() == Qt::LeftButton &&
+            exit_button_rect().contains(event->pos())) {
+            QCoreApplication::quit();
+            return;
+        }
+
         if (mode_ != Mode::Selecting || event->button() != Qt::LeftButton) {
             QWidget::mousePressEvent(event);
             return;
@@ -638,6 +744,34 @@ private:
         Finished,
         Error,
     };
+
+    QRectF exit_button_rect() const
+    {
+        const int x = std::max(0, width() - kExitButtonWidth - kExitButtonMargin);
+        return QRectF(x, kExitButtonMargin, kExitButtonWidth, kExitButtonHeight);
+    }
+
+    void draw_exit_button(QPainter& painter) const
+    {
+        if (!options_.show_exit_button) {
+            return;
+        }
+
+        const QRectF button_rect = exit_button_rect();
+        painter.save();
+        painter.setRenderHint(QPainter::Antialiasing, true);
+        painter.setPen(QPen(QColor(60, 60, 60), 1));
+        painter.setBrush(QColor(48, 45, 45, 230));
+        painter.drawRoundedRect(button_rect, 6, 6);
+
+        QFont font = painter.font();
+        font.setPixelSize(13);
+        font.setBold(true);
+        painter.setFont(font);
+        painter.setPen(QColor(204, 204, 204));
+        painter.drawText(button_rect, Qt::AlignCenter, "X");
+        painter.restore();
+    }
 
     QRectF image_draw_rect() const
     {
