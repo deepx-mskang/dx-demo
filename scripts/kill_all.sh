@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+cd "$(dirname "$0")"
+
 ./kill_clip.sh 
 ./kill_depth.sh 
 ./kill_ocr.sh
@@ -8,4 +10,4 @@ set -euo pipefail
 ./kill_yolo_multi.sh
 ./kill_robotics.sh
 
-sleep 0.2
+sleep 0.1

@@ -63,7 +63,8 @@ _ready_watcher: QFileSystemWatcher | None = None
 _ready_finishers: dict[str, Callable[[], None]] = {}
 
 # Per-item configuration. Paths in "image" are relative to _ROOT unless absolute.
-# video_script / camera_script: resolved relative to _ROOT unless absolute.
+# video_script / camera_script (optional): resolved relative to _ROOT unless absolute.
+#   Omit one to show a single button (e.g. Drone Tracking uses video_script only).
 # video_label / camera_label (optional): override button text (default "Video" / "Camera"),
 #   e.g. Performance Monitoring uses "Start" / "Stop" with the same script keys.
 # extra_buttons (optional): extra actions for some demos only, e.g.
@@ -161,15 +162,15 @@ LAUNCHER_ITEMS = [
         "loading_sec": 5,
     },
     {
-        "title": "DRON",
+        "title": "Drone Tracking",
         "title_i18n": {
-            "zh": "DRON",
-            "ja": "DRON",
-            "ko": "DRON",
+            "zh": "Drone Tracking",
+            "ja": "Drone Tracking",
+            "ko": "Drone Tracking",
         },
         "image": "assets/demo-dron.png",
-        "video_script": "../scripts/run_PIDNet.sh",
-        "camera_script": "../scripts/run_YOLOPv2.sh",
+        "video_script": "../scripts/./run_drone_1.sh",
+        "video_label": "Video",
         "loading_sec": 5,
     },
     {
@@ -679,18 +680,25 @@ class MainWindow(QWidget):
             video_ms = _button_loading_ms(cfg, "video_loading_sec", fb)
             camera_ms = _button_loading_ms(cfg, "camera_loading_sec", fb)
             extras = _normalize_extra_buttons(cfg.get("extra_buttons"), fb)
-            actions: list[tuple[str, str, int]] = [
-                (
-                    str(v_label) if v_label is not None else "Video",
-                    str(cfg["video_script"]),
-                    video_ms,
-                ),
-                (
-                    str(c_label) if c_label is not None else "Camera",
-                    str(cfg["camera_script"]),
-                    camera_ms,
-                ),
-            ]
+            actions: list[tuple[str, str, int]] = []
+            video_script = cfg.get("video_script")
+            if video_script:
+                actions.append(
+                    (
+                        str(v_label) if v_label is not None else "Video",
+                        str(video_script),
+                        video_ms,
+                    )
+                )
+            camera_script = cfg.get("camera_script")
+            if camera_script:
+                actions.append(
+                    (
+                        str(c_label) if c_label is not None else "Camera",
+                        str(camera_script),
+                        camera_ms,
+                    )
+                )
             actions.extend(extras)
             item = LauncherItem(
                 title=_localized_item_title(cfg, "en"),
