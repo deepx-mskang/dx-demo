@@ -21,6 +21,10 @@
 #include <vector>
 #include <opencv2/opencv.hpp>
 
+#ifdef DXAPP_USE_QT_DISPLAY
+#include "common/utility/qt_display.hpp"
+#endif
+
 #if __cplusplus >= 201703L || (defined(_MSVC_LANG) && _MSVC_LANG >= 201703L)
 #include <filesystem>
 namespace fs = std::filesystem;
@@ -169,6 +173,23 @@ inline bool isVersionGreaterOrEqual(const std::string& v1, const std::string& v2
 }
 
 /**
+ * @brief Enable DXRT NPU/CPU acceleration options when available.
+ *
+ * Must be called before constructing dxrt::InferenceEngine.
+ */
+inline void enableDxrtAcceleration() {
+#if defined(DXRT_NFH_ACCELERATION_AVAILABLE) || defined(DXRT_CPU_OP_ACCELERATION_AVAILABLE)
+    auto& config = dxrt::Configuration::GetInstance();
+#ifdef DXRT_NFH_ACCELERATION_AVAILABLE
+    config.SetEnable(dxrt::Configuration::ITEM::NFH_ACCELERATION, true);
+#endif
+#ifdef DXRT_CPU_OP_ACCELERATION_AVAILABLE
+    config.SetEnable(dxrt::Configuration::ITEM::CPU_OP_ACCELERATION, true);
+#endif
+#endif
+}
+
+/**
  * @brief Check minimum version compatibility for RT and Compiler
  * 
  * Validates that the DXRT library version is >= 3.0.0 and
@@ -277,6 +298,8 @@ inline std::pair<int, int> getScreenResolution() {
 #endif
     return {1920, 1080};
 }
+
+#ifndef DXAPP_USE_QT_DISPLAY
 
 struct DisplaySettings {
     bool full_screen = false;
@@ -581,6 +604,8 @@ inline void showOutput(const cv::Mat& frame) {
     _applyDisplayOverlays(display_frame);
     cv::imshow("Output", display_frame);
 }
+
+#endif  // DXAPP_USE_QT_DISPLAY
 
 /**
  * @brief Write frame to video, auto-resizing if frame size differs from writer.

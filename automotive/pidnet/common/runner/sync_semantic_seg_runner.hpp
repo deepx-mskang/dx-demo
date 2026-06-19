@@ -48,7 +48,7 @@ public:
         CommandLineArgs args = parseCommandLine(argc, argv);
         verbose_ = args.verbose;
         dxapp::resetDisplayState();
-        dxapp::configureDisplay(args.full_screen, args.show_exit_button);
+        dxapp::configureDisplay(args.full_screen, args.show_exit_button, argc, argv);
         if (verbose_) {
             std::cout << "[INFO] --show-log: This task produces image-based output. "
                          "Use --save or display mode to view results." << std::endl;
@@ -72,6 +72,7 @@ public:
         }
 
         // Initialize inference engine (Legacy API)
+        dxapp::enableDxrtAcceleration();
         dxrt::InferenceOption io;
         dxrt::InferenceEngine ie(args.modelPath, io);
         model_path_ = args.modelPath;

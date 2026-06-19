@@ -11,6 +11,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # Find Required Packages
 # =============================================================================
 find_package(OpenCV REQUIRED)
+find_package(Qt5 REQUIRED COMPONENTS Widgets Gui)
 
 if(CROSS_COMPILE OR MSVC)
     find_library(DXRT_LIB dxrt HINTS ${DXRT_INSTALLED_DIR}/lib REQUIRED)
@@ -33,7 +34,8 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR}/extern)
 # =============================================================================
 # Common Libraries & Flags
 # =============================================================================
-set(COMMON_LIBS ${OpenCV_LIBS} ${DXRT_LIB})
+set(COMMON_LIBS ${OpenCV_LIBS} ${DXRT_LIB} Qt5::Widgets)
+add_compile_definitions(DXAPP_USE_QT_DISPLAY)
 
 # Filesystem library for older compilers
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS "9.0")
@@ -54,7 +56,7 @@ add_compile_definitions(PROJECT_ROOT_DIR="${PROJECT_ROOT_OVERRIDE}")
 # =============================================================================
 # Source Files
 # =============================================================================
-set(UTILITY_SOURCES utility/common_util.cpp)
+set(UTILITY_SOURCES utility/common_util.cpp common/utility/qt_display.cpp)
 file(GLOB POSTPROCESS_SOURCES "postprocess/*.cpp")
 
 # --- pidnet_s_cityscapes_sync ---

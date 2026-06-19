@@ -67,7 +67,7 @@ public:
         CommandLineArgs args = parseCommandLine(argc, argv);
         verbose_ = args.verbose;
         dxapp::resetDisplayState();
-        dxapp::configureDisplay(args.full_screen, args.show_exit_button);
+        dxapp::configureDisplay(args.full_screen, args.show_exit_button, argc, argv);
         if (const char* trace_path = std::getenv("DXAPP_TRACE_FRAME_ORDER")) {
             frame_order_trace_path_ = trace_path;
             std::ofstream clear_trace(frame_order_trace_path_, std::ios::trunc);
@@ -90,6 +90,7 @@ public:
             loopTest = 1;
         }
 
+        dxapp::enableDxrtAcceleration();
         dxrt::InferenceOption io;
         dxrt::InferenceEngine ie(args.modelPath, io);
         model_path_ = args.modelPath;
@@ -353,7 +354,7 @@ public:
         display_queue_.shutdown();
         rendered_queue_.shutdown();
         displayThr.join();
-        cv::destroyAllWindows();
+        dxapp::shutdownDisplay();
 
         auto e_time = std::chrono::high_resolution_clock::now();
         double total_time = std::chrono::duration<double>(e_time - s_time).count();
@@ -380,7 +381,6 @@ private:
     std::string model_path_;
     std::atomic<bool> running_{true};
     bool window_shown_ = false;
-    bool window_prop_supported_ = true;  // false if backend always returns -1
     SafeQueue<AsyncSemanticSegDisplayArgs> display_queue_;
     SafeQueue<cv::Mat> rendered_queue_;  // Rendered frames for main-thread display
     AsyncProfilingMetrics metrics_;
@@ -630,34 +630,15 @@ private:
             }
             if (!window_shown_) {
                 window_shown_ = true;
-                // Probe backend: some backends (e.g. GTK2) always return -1
-                // for WND_PROP_VISIBLE. Detect this on the first frame so we
-                // never falsely interpret -1 as "window closed by user".
-                cv::waitKey(1);
-                double probe = cv::getWindowProperty("Output", cv::WND_PROP_VISIBLE);
-                if (probe < -0.5) {
-                    window_prop_supported_ = false;
-                }
                 return true;
             }
         }
-        if (!window_shown_) return true;  // window not created yet, skip checks
-        // Pump events and detect user quit / window close
-        char key = cv::waitKey(1);
-        if (key == 'q' || key == 27 || dxapp::consumeExitButtonClick()) {
+        if (!window_shown_) return true;
+        if (dxapp::windowShouldClose()) {
             running_ = false;
             display_queue_.shutdown();
             rendered_queue_.shutdown();
             return false;
-        }
-        if (window_prop_supported_) {
-            double vis = cv::getWindowProperty("Output", cv::WND_PROP_VISIBLE);
-            if (vis <= 0.0) {
-                running_ = false;
-                display_queue_.shutdown();
-                rendered_queue_.shutdown();
-                return false;
-            }
         }
         return true;
     }
