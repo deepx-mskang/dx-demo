@@ -24,6 +24,7 @@
 #include "common/utility/common_util.hpp"
 #include "common/utility/run_dir.hpp"
 #include "common/utility/verify_serialize.hpp"
+#include "common/visualizers/segmentation_visualizer.hpp"
 #include "sync_detection_runner.hpp"
 
 namespace dxapp {
@@ -46,6 +47,7 @@ public:
         int processCount = 0;
 
         CommandLineArgs args = parseCommandLine(argc, argv);
+        args.segmentationPalette = dxapp::normalizeSegmentationPaletteName(args.segmentationPalette);
         verbose_ = args.verbose;
         dxapp::resetDisplayState();
         dxapp::configureDisplay(args.full_screen, args.show_exit_button, argc, argv);
@@ -93,6 +95,7 @@ public:
             dxapp::ModelConfig config(args.configPath);
             factory_->loadConfig(config);
         }
+        factory_->setSegmentationPalette(args.segmentationPalette);
 
         auto preprocessor = factory_->createPreprocessor(input_width, input_height);
         auto postprocessor = factory_->createPostprocessor(input_width, input_height);
@@ -236,6 +239,30 @@ public:
 private:
     std::unique_ptr<FactoryT> factory_;
     std::string model_path_;
+    bool npu_fps_started_{false};
+    int npu_fps_completed_{0};
+    std::chrono::steady_clock::time_point npu_fps_start_ts_;
+
+    void markNpuInferenceStarted() {
+        if (npu_fps_started_) {
+            return;
+        }
+        npu_fps_started_ = true;
+        npu_fps_start_ts_ = std::chrono::steady_clock::now();
+        dxapp::setDisplayFps(0.0);
+    }
+
+    void markNpuInferenceCompleted() {
+        if (!npu_fps_started_) {
+            markNpuInferenceStarted();
+        }
+        ++npu_fps_completed_;
+        const auto now = std::chrono::steady_clock::now();
+        const double elapsed = std::chrono::duration<double>(now - npu_fps_start_ts_).count();
+        dxapp::setDisplayFps(elapsed > 1e-6
+            ? static_cast<double>(npu_fps_completed_) / elapsed
+            : 0.0);
+    }
 
     CommandLineArgs parseCommandLine(int argc, char* argv[]) {
         CommandLineArgs args;
@@ -264,6 +291,8 @@ private:
              cxxopts::value<bool>(args.no_display)->default_value("false"))
             ("config", "Model configuration JSON file path",
              cxxopts::value<std::string>(args.configPath))
+            ("seg-palette", "Segmentation palette: " + dxapp::getSegmentationPaletteOptionsText(),
+             cxxopts::value<std::string>(args.segmentationPalette)->default_value(dxapp::kDefaultSegmentationPalette))
             ("show-log", "Enable verbose log output (default: quiet)",
              cxxopts::value<bool>(args.verbose)->default_value("false"))
             ("full_screen", "Show output in fullscreen",
@@ -285,6 +314,10 @@ private:
             dxapp::fatal_error("[ERROR] Model path is required. Use -m or --model_path option.\n"
                 "        -> Download:  ./setup.sh --models <model_name>\n"
                 "        -> Or use:    ./run_demo.sh  (auto-downloads demo models)");
+        }
+        if (!dxapp::isValidSegmentationPalette(args.segmentationPalette)) {
+            dxapp::fatal_error("[ERROR] Invalid segmentation palette: " + args.segmentationPalette + "\n"
+                "        -> Available palettes: " + dxapp::getSegmentationPaletteOptionsText());
         }
         // Auto-download model if not found
         if (!dxapp::fileExists(args.modelPath)) {
@@ -383,8 +416,10 @@ private:
         auto t1 = std::chrono::high_resolution_clock::now();
         double t_preprocess = std::chrono::duration<double, std::milli>(t1 - t0).count();
 
+        markNpuInferenceStarted();
         auto outputs = ie.Run(preprocessed.data, nullptr, nullptr);
         auto t2 = std::chrono::high_resolution_clock::now();
+        markNpuInferenceCompleted();
         double t_inference = std::chrono::duration<double, std::milli>(t2 - t1).count();
 
         if (outputs.empty()) {

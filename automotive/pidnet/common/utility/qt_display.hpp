@@ -17,6 +17,7 @@ void resetDisplayState();
 void shutdownDisplay();
 bool consumeExitButtonClick();
 bool windowShouldClose(const std::string& winname = "Output");
+void setDisplayFps(double fps);
 void showOutput(const cv::Mat& frame);
 
 }  // namespace dxapp

@@ -30,6 +30,7 @@
 #include "common/utility/common_util.hpp"
 #include "common/utility/run_dir.hpp"
 #include "common/utility/verify_serialize.hpp"
+#include "common/visualizers/segmentation_visualizer.hpp"
 #include "async_detection_runner.hpp"
 
 namespace dxapp {
@@ -65,6 +66,7 @@ public:
         int processCount = 0;
 
         CommandLineArgs args = parseCommandLine(argc, argv);
+        args.segmentationPalette = dxapp::normalizeSegmentationPaletteName(args.segmentationPalette);
         verbose_ = args.verbose;
         dxapp::resetDisplayState();
         dxapp::configureDisplay(args.full_screen, args.show_exit_button, argc, argv);
@@ -110,6 +112,7 @@ public:
             dxapp::ModelConfig config(args.configPath);
             factory_->loadConfig(config);
         }
+        factory_->setSegmentationPalette(args.segmentationPalette);
 
         auto preprocessor = factory_->createPreprocessor(input_width, input_height);
         // Segmentation: no is_ort_configured parameter
@@ -412,7 +415,7 @@ private:
         double t_postprocess = std::chrono::duration<double, std::milli>(t_post_end - t_post_start).count();
             { std::lock_guard<std::mutex> lock(metrics_.metrics_mutex); metrics_.sum_postprocess += t_postprocess; }
 
-        completeInflightMetrics();
+        dxapp::setDisplayFps(completeInflightMetrics());
 
         AsyncSemanticSegDisplayArgs display_args;
         display_args.original_frame = std::make_shared<cv::Mat>(ud_ptr->display_frame);
@@ -434,7 +437,8 @@ private:
 
 
     /** Update metrics when an async inference job completes. */
-    void completeInflightMetrics() {
+    double completeInflightMetrics() {
+        double npu_fps = 0.0;
         {
             std::lock_guard<std::mutex> lock(metrics_.metrics_mutex);
             auto now = std::chrono::high_resolution_clock::now();
@@ -446,8 +450,14 @@ private:
             metrics_.inflight_last_ts = now;
             metrics_.infer_last_ts = now;
             metrics_.infer_completed++;
+            const double elapsed = std::chrono::duration<double>(
+                metrics_.infer_last_ts - metrics_.infer_first_ts).count();
+            if (elapsed > 1e-6) {
+                npu_fps = static_cast<double>(metrics_.infer_completed) / elapsed;
+            }
         }
         metrics_.notifySlot();
+        return npu_fps;
     }
 
     CommandLineArgs parseCommandLine(int argc, char* argv[]) {
@@ -468,6 +478,8 @@ private:
             ("no-display", "will not visualize, only show fps", cxxopts::value<bool>(args.no_display)->default_value("false"))
             ("config", "Model configuration JSON file path",
              cxxopts::value<std::string>(args.configPath))
+            ("seg-palette", "Segmentation palette: " + dxapp::getSegmentationPaletteOptionsText(),
+             cxxopts::value<std::string>(args.segmentationPalette)->default_value(dxapp::kDefaultSegmentationPalette))
             ("show-log", "Enable verbose log output (default: quiet)",
              cxxopts::value<bool>(args.verbose)->default_value("false"))
             ("full_screen", "Show output in fullscreen",
@@ -484,6 +496,10 @@ private:
         if (args.modelPath.empty()) { dxapp::fatal_error("[ERROR] Model path is required. Use -m or --model_path option.\n"
                 "        -> Download:  ./setup.sh --models <model_name>\n"
                 "        -> Or use:    ./run_demo.sh  (auto-downloads demo models)"); }
+        if (!dxapp::isValidSegmentationPalette(args.segmentationPalette)) {
+            dxapp::fatal_error("[ERROR] Invalid segmentation palette: " + args.segmentationPalette + "\n"
+                "        -> Available palettes: " + dxapp::getSegmentationPaletteOptionsText());
+        }
         // Auto-download model if not found
         if (!dxapp::fileExists(args.modelPath)) {
             if (!dxapp::autoDownloadModel(args.modelPath)) {
@@ -687,10 +703,10 @@ private:
         std::cout << " " << std::left << std::setw(19) << "Infer Inflight Avg" << " :    " << std::fixed << std::setprecision(1) << inflight_avg << std::endl;
         std::cout << " " << std::left << std::setw(19) << "Infer Inflight Max" << " :      " << metrics_.inflight_max << std::endl;
         std::cout << "--------------------------------------------------" << std::endl;
-        std::cout << " " << std::left << std::setw(19) << "Total Frames" << " :    " << total_frames << std::endl;
+        std::cout << " " << std::left << std::setw(19) << "Submitted Frames" << " :    " << total_frames << std::endl;
         std::cout << " " << std::left << std::setw(19) << "Total Time" << " :    " << std::fixed << std::setprecision(1) << total_time_sec << " s" << std::endl;
-        double overall_fps = (total_time_sec > 0) ? total_frames / total_time_sec : 0.0;
-        std::cout << " " << std::left << std::setw(19) << "Overall FPS" << " :   " << std::fixed << std::setprecision(1) << overall_fps << " FPS" << std::endl;
+        double overall_fps = (total_time_sec > 0) ? metrics_.infer_completed / total_time_sec : 0.0;
+        std::cout << " " << std::left << std::setw(19) << "Overall NPU FPS" << " :   " << std::fixed << std::setprecision(1) << overall_fps << " FPS" << std::endl;
         std::cout << "==================================================" << std::endl;
     }
 };

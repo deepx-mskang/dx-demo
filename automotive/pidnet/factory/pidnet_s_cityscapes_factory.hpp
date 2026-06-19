@@ -22,6 +22,10 @@ public:
         pidnet_argmax_scale_ = config.get<double>("pidnet_argmax_scale", pidnet_argmax_scale_);
     }
 
+    void setSegmentationPalette(const std::string& palette_name) override {
+        segmentation_palette_ = dxapp::normalizeSegmentationPaletteName(palette_name);
+    }
+
     PreprocessorPtr createPreprocessor(int input_width, int input_height) override {
         return std::make_unique<SimpleResizePreprocessor>(input_width, input_height);
     }
@@ -32,7 +36,7 @@ public:
     }
 
     VisualizerPtr<SegmentationResult> createVisualizer() override {
-        return std::make_unique<SemanticSegmentationVisualizer>();
+        return std::make_unique<SemanticSegmentationVisualizer>(segmentation_palette_);
     }
 
     std::string getModelName() const override { return "pidnet_s_cityscapes"; }
@@ -40,6 +44,7 @@ public:
 
 private:
     double pidnet_argmax_scale_ = 0.0;
+    std::string segmentation_palette_{kDefaultSegmentationPalette};
 };
 
 }  // namespace dxapp

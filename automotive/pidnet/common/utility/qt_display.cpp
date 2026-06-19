@@ -13,6 +13,7 @@
 
 #include <opencv2/imgproc.hpp>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -29,6 +30,48 @@ namespace {
 constexpr int kExitButtonWidth = 32;
 constexpr int kExitButtonHeight = 28;
 constexpr int kExitButtonMargin = 14;
+
+struct DisplayFpsState {
+    std::mutex mutex;
+    double fps = 0.0;
+    bool external = false;
+    std::chrono::steady_clock::time_point last_ts = std::chrono::steady_clock::now();
+};
+
+DisplayFpsState& fpsState() {
+    static DisplayFpsState instance;
+    return instance;
+}
+
+void resetDisplayFpsState() {
+    auto& s = fpsState();
+    std::lock_guard<std::mutex> lock(s.mutex);
+    s.fps = 0.0;
+    s.external = false;
+    s.last_ts = std::chrono::steady_clock::now();
+}
+
+void updateFallbackDisplayFps() {
+    auto& s = fpsState();
+    std::lock_guard<std::mutex> lock(s.mutex);
+    if (s.external) {
+        return;
+    }
+
+    const auto now = std::chrono::steady_clock::now();
+    const double dt = std::chrono::duration<double>(now - s.last_ts).count();
+    if (dt > 1e-6) {
+        const double instant = 1.0 / dt;
+        s.fps = (s.fps <= 0.0) ? instant : (s.fps * 0.85 + instant * 0.15);
+    }
+    s.last_ts = now;
+}
+
+double currentDisplayFps() {
+    auto& s = fpsState();
+    std::lock_guard<std::mutex> lock(s.mutex);
+    return s.fps;
+}
 
 class QtOutputWidget : public QWidget {
 public:
@@ -55,7 +98,7 @@ public:
             rgb_cache.rows,
             static_cast<int>(rgb_cache.step),
             QImage::Format_RGB888);
-        updateDisplayFps();
+        updateFallbackDisplayFps();
         update();
     }
 
@@ -137,7 +180,7 @@ private:
     }
 
     void drawFpsOverlay(QPainter& painter) const {
-        const QString text = QString("%1 FPS").arg(display_fps_, 0, 'f', 1);
+        const QString text = QString("%1 FPS").arg(currentDisplayFps(), 0, 'f', 1);
 
         QFont font = painter.font();
         font.setFamily("DejaVu Sans");
@@ -169,16 +212,6 @@ private:
         painter.restore();
     }
 
-    void updateDisplayFps() {
-        const auto now = std::chrono::steady_clock::now();
-        const double dt = std::chrono::duration<double>(now - last_fps_ts_).count();
-        if (dt > 1e-6) {
-            const double instant = 1.0 / dt;
-            display_fps_ = (display_fps_ <= 0.0) ? instant : (display_fps_ * 0.85 + instant * 0.15);
-        }
-        last_fps_ts_ = now;
-    }
-
     void requestQuit() {
         if (quit_handler_) {
             quit_handler_();
@@ -186,10 +219,8 @@ private:
     }
 
     QImage frame_image_;
-    double display_fps_ = 0.0;
     bool show_exit_button_ = false;
     std::function<void()> quit_handler_;
-    std::chrono::steady_clock::time_point last_fps_ts_ = std::chrono::steady_clock::now();
 };
 
 struct QtDisplayState {
@@ -307,6 +338,7 @@ void resetDisplayState() {
     s.exit_clicked.store(false);
     s.window_sized = false;
     s.rgb_buffer.release();
+    resetDisplayFpsState();
     if (s.window) {
         s.window->close();
         s.window.reset();
@@ -328,6 +360,13 @@ bool windowShouldClose(const std::string& /*winname*/) {
     }
     pumpEvents();
     return s.closed;
+}
+
+void setDisplayFps(double fps) {
+    auto& s = fpsState();
+    std::lock_guard<std::mutex> lock(s.mutex);
+    s.fps = std::max(0.0, fps);
+    s.external = true;
 }
 
 void showOutput(const cv::Mat& frame) {

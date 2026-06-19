@@ -313,6 +313,7 @@ struct DisplayRuntime {
     bool show_probed = false;
     bool show_prop_supported = true;
     bool mouse_cb_set = false;
+    bool fps_external = false;
     double fps = 0.0;
     std::chrono::steady_clock::time_point last_fps_ts = std::chrono::steady_clock::now();
     cv::Rect exit_btn_rect;
@@ -344,6 +345,7 @@ inline void resetDisplayState() {
     rt.show_probed = false;
     rt.show_prop_supported = true;
     rt.mouse_cb_set = false;
+    rt.fps_external = false;
     rt.fps = 0.0;
     rt.last_fps_ts = std::chrono::steady_clock::now();
     rt.exit_clicked.store(false);
@@ -359,6 +361,7 @@ inline bool consumeExitButtonClick() {
 }
 
 inline void _updateDisplayFps() {
+    if (_displayRuntime().fps_external) return;
     auto now = std::chrono::steady_clock::now();
     auto& rt = _displayRuntime();
     const double dt = std::chrono::duration<double>(now - rt.last_fps_ts).count();
@@ -367,6 +370,12 @@ inline void _updateDisplayFps() {
         rt.fps = (rt.fps <= 0.0) ? instant : (rt.fps * 0.85 + instant * 0.15);
     }
     rt.last_fps_ts = now;
+}
+
+inline void setDisplayFps(double fps) {
+    auto& rt = _displayRuntime();
+    rt.fps = std::max(0.0, fps);
+    rt.fps_external = true;
 }
 
 inline void _drawRoundedRect(cv::Mat& image, const cv::Rect& rect, int radius,

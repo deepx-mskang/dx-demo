@@ -54,6 +54,7 @@ struct CommandLineArgs {
     std::string rtspUrl;
     std::string saveDir;
     std::string configPath;
+    std::string segmentationPalette = "aurora";
     int cameraIndex = -1;
     int loopTest = -1;
     bool no_display = false;

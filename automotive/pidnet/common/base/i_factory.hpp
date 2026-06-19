@@ -95,6 +95,7 @@ public:
     virtual std::string getTaskType() const = 0;
 
     virtual void loadConfig(const ModelConfig& /*config*/) { /* No-op: subclasses override to apply runtime parameters */ }
+    virtual void setSegmentationPalette(const std::string& /*palette_name*/) { /* No-op: subclasses override if visualizer supports palettes */ }
 };
 
 /**
