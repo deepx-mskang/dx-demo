@@ -917,7 +917,10 @@ class PerformanceInfoWidget : public QWidget {
     Q_OBJECT
 
 public:
-    explicit PerformanceInfoWidget(QWidget* parent = nullptr)
+    explicit PerformanceInfoWidget(
+        SharpnessMode sharpnessMode,
+        bool sharpnessEnabled,
+        QWidget* parent = nullptr)
         : QWidget(parent)
     {
         auto* layout = new QVBoxLayout(this);
@@ -926,9 +929,46 @@ public:
         setFixedHeight(184);
         setStyleSheet("background:transparent; border:none;");
 
+        auto* titleRow = new QHBoxLayout();
+        titleRow->setContentsMargins(0, 0, 0, 0);
+        titleRow->setSpacing(8);
+
         auto* title = new QLabel("Performance & Controls");
         title->setStyleSheet(QString("font-size:18px; font-weight:bold; color:%1; border:none; background:transparent;").arg(kAccent));
-        layout->addWidget(title);
+        titleRow->addWidget(title);
+        titleRow->addStretch(1);
+
+        auto* sharpnessCheckBox = new QCheckBox("OCR Sharpness");
+        sharpnessCheckBox->setChecked(sharpnessEnabled);
+        sharpnessCheckBox->setToolTip(
+            QString("Enable sharpening for preview and OCR input (mode: %1)")
+                .arg(sharpnessModeName(sharpnessMode)));
+        sharpnessCheckBox->setStyleSheet(QString(R"(
+            QCheckBox {
+                color: %1;
+                font-size: 12px;
+                border: none;
+                background: transparent;
+                spacing: 6px;
+            }
+            QCheckBox::indicator {
+                width: 14px;
+                height: 14px;
+            }
+            QCheckBox::indicator:unchecked {
+                border: 1px solid %2;
+                background: %3;
+                border-radius: 3px;
+            }
+            QCheckBox::indicator:checked {
+                border: 1px solid %4;
+                background: %5;
+                border-radius: 3px;
+            }
+        )").arg(kTextDim, kBorder, kCard, kAccent, kAccent));
+        connect(sharpnessCheckBox, &QCheckBox::toggled, this, &PerformanceInfoWidget::sharpnessToggled);
+        titleRow->addWidget(sharpnessCheckBox);
+        layout->addLayout(titleRow);
 
         auto* grid = new QGridLayout();
         grid->setContentsMargins(0, 0, 0, 0);
@@ -987,6 +1027,7 @@ public:
 signals:
     void pauseRequested();
     void saveRequested();
+    void sharpnessToggled(bool enabled);
 
 private:
     static QString fpsText(double ms)
@@ -1343,9 +1384,10 @@ private:
         leftInfoLayout->setContentsMargins(14, 12, 14, 12);
         leftInfoLayout->setSpacing(10);
 
-        performanceWidget_ = new PerformanceInfoWidget();
+        performanceWidget_ = new PerformanceInfoWidget(sharpnessMode_, sharpnessEnabled_);
         connect(performanceWidget_, &PerformanceInfoWidget::pauseRequested, this, &ImageViewerApp::onPauseRequested);
         connect(performanceWidget_, &PerformanceInfoWidget::saveRequested, this, &ImageViewerApp::onSaveRequested);
+        connect(performanceWidget_, &PerformanceInfoWidget::sharpnessToggled, this, &ImageViewerApp::onSharpnessToggled);
         leftInfoLayout->addWidget(performanceWidget_);
 
         auto* focusRow = new QWidget();
@@ -1355,38 +1397,9 @@ private:
         focusLayout->setContentsMargins(0, 0, 0, 0);
         auto* focusLabel = new QLabel("Camera Focus Tuning");
         focusLabel->setStyleSheet(QString("color:%1; font-size:12px; border:none; background:transparent;").arg(kTextDim));
-        sharpnessCheckBox_ = new QCheckBox("Sharpness");
-        sharpnessCheckBox_->setChecked(sharpnessEnabled_);
-        sharpnessCheckBox_->setToolTip(
-            QString("Enable OCR sharpening for preview and OCR input (mode: %1)")
-                .arg(sharpnessModeName(sharpnessMode_)));
-        sharpnessCheckBox_->setStyleSheet(QString(R"(
-            QCheckBox {
-                color: %1;
-                font-size: 12px;
-                border: none;
-                background: transparent;
-                spacing: 6px;
-            }
-            QCheckBox::indicator {
-                width: 14px;
-                height: 14px;
-            }
-            QCheckBox::indicator:unchecked {
-                border: 1px solid %2;
-                background: %3;
-                border-radius: 3px;
-            }
-            QCheckBox::indicator:checked {
-                border: 1px solid %4;
-                background: %5;
-                border-radius: 3px;
-            }
-        )").arg(kTextDim, kBorder, kCard, kAccent, kAccent));
-        connect(sharpnessCheckBox_, &QCheckBox::toggled, this, &ImageViewerApp::onSharpnessToggled);
         focusSlider_ = new QSlider(Qt::Horizontal);
         focusSlider_->setRange(0, 100);
-        focusSlider_->setFixedWidth(330);
+        focusSlider_->setFixedWidth(450);
         focusSlider_->setEnabled(false);
         focusSlider_->setStyleSheet(QString(R"(
             QSlider::groove:horizontal { height: 6px; background: %1; border-radius: 3px; }
@@ -1395,7 +1408,6 @@ private:
         )").arg(kBorder, kAccent, kAccentDark));
         connect(focusSlider_, &QSlider::valueChanged, this, &ImageViewerApp::onFocusChanged);
         focusLayout->addWidget(focusLabel);
-        focusLayout->addWidget(sharpnessCheckBox_);
         focusLayout->addStretch(1);
         focusLayout->addWidget(focusSlider_);
         leftInfoLayout->addWidget(focusRow);
@@ -1613,7 +1625,6 @@ private:
     QLabel* rightImageLabel_ = nullptr;
     QTextEdit* infoText_ = nullptr;
     PerformanceInfoWidget* performanceWidget_ = nullptr;
-    QCheckBox* sharpnessCheckBox_ = nullptr;
     QSlider* focusSlider_ = nullptr;
 
     CameraThread* cameraThread_ = nullptr;
