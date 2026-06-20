@@ -37,6 +37,7 @@ from PyQt5.QtWidgets import (
 from perf_monitor import (
     NPU_CORE_COUNT,
     UPDATE_INTERVAL_MS,
+    configure_overlay_window,
     fetch_npu_utilization,
     try_host_cpu_temperature,
     try_device_status_temperature,
@@ -183,7 +184,7 @@ class PerfMonitorDesign(QWidget):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("DEEPX — Performance Monitor")
-        self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint | Qt.FramelessWindowHint)
+        configure_overlay_window(self)
         # 콘텐츠에 맞춘 최소 높이(기존 320*0.7 대비 ~10% 이상 축소)
         self.setMinimumSize(360, 160)
         self.setStyleSheet(f"background-color: {DX.BG};")
@@ -258,6 +259,9 @@ class PerfMonitorDesign(QWidget):
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._refresh)
         self._timer.start(UPDATE_INTERVAL_MS)
+        self._overlay_timer = QTimer(self)
+        self._overlay_timer.timeout.connect(self._raise_overlay)
+        self._overlay_timer.start(1500)
         self._refresh()
 
         self._drag_origin: Optional[QPoint] = None
@@ -267,6 +271,16 @@ class PerfMonitorDesign(QWidget):
         self.installEventFilter(self)
         for child in self.findChildren(QWidget):
             child.installEventFilter(self)
+
+    def showEvent(self, event) -> None:  # noqa: ANN001
+        super().showEvent(event)
+        QTimer.singleShot(0, self._raise_overlay)
+        QTimer.singleShot(250, self._raise_overlay)
+
+    def _raise_overlay(self) -> None:
+        if self.isVisible():
+            self.show()
+            self.raise_()
 
     def eventFilter(self, obj, event):  # noqa: ANN001
         if event.type() == QEvent.MouseButtonPress:
