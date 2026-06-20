@@ -16,6 +16,7 @@
 #include <QMainWindow>
 #include <QMetaObject>
 #include <QPixmap>
+#include <QPushButton>
 #include <QSizePolicy>
 #include <QTimer>
 #include <QVBoxLayout>
@@ -106,6 +107,7 @@ struct AppArgs {
     int seg_render_height = 360;
     bool save_video = false;
     std::string output_video;
+    bool show_exit_button = false;
 };
 
 AppArgs parseArgs(int argc, char* argv[]) {
@@ -154,6 +156,8 @@ AppArgs parseArgs(int argc, char* argv[]) {
          cxxopts::value<bool>(args.save_video)->default_value("false"))
         ("output-video", "Output video file path (enables saving when specified).",
          cxxopts::value<std::string>(args.output_video)->default_value(""))
+        ("exit-btn", "Show an exit button in the Pose Estimation panel header.",
+         cxxopts::value<bool>(args.show_exit_button)->default_value("false"))
         ("h,help", "Print usage");
 
     auto result = options.parse(argc, argv);
@@ -721,7 +725,10 @@ private:
     std::thread thread_;
 };
 
-QFrame* makePanel(const QString& title, QLabel** image_label, QLabel** fps_label) {
+QFrame* makePanel(const QString& title,
+                  QLabel** image_label,
+                  QLabel** fps_label,
+                  bool show_exit_button = false) {
     auto* frame = new QFrame;
     frame->setObjectName("yolo_panel");
     frame->setStyleSheet(
@@ -760,7 +767,7 @@ QFrame* makePanel(const QString& title, QLabel** image_label, QLabel** fps_label
     fps->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
     fps->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Fixed);
     fps->setFocusPolicy(Qt::NoFocus);
-    fps->setStyleSheet(
+    fps->setStyleSheet(QString(
         "QLabel#yolo_panel_fps {"
         "color: #9aa3b2;"
         "font-size: 12px;"
@@ -769,11 +776,54 @@ QFrame* makePanel(const QString& title, QLabel** image_label, QLabel** fps_label
         "padding: 8px 12px 6px 8px;"
         "background-color: #1e222b;"
         "border-bottom: 1px solid #353b48;"
-        "border-top-right-radius: 7px;"
-        "}");
+        "%1"
+        "}").arg(show_exit_button ? "" : "border-top-right-radius: 7px;"));
 
     header->addWidget(title_label, 1);
     header->addWidget(fps, 0);
+
+    if (show_exit_button) {
+        auto* exit_area = new QWidget;
+        exit_area->setObjectName("yolo_panel_exit_area");
+        exit_area->setFixedWidth(48);
+        exit_area->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
+        exit_area->setStyleSheet(
+            "QWidget#yolo_panel_exit_area {"
+            "background-color: #1e222b;"
+            "border-bottom: 1px solid #353b48;"
+            "border-top-right-radius: 7px;"
+            "}");
+
+        auto* exit_layout = new QHBoxLayout(exit_area);
+        exit_layout->setContentsMargins(8, 0, 8, 0);
+        exit_layout->setSpacing(0);
+
+        auto* exit_button = new QPushButton("X");
+        exit_button->setFixedSize(32, 28);
+        exit_button->setFocusPolicy(Qt::NoFocus);
+        exit_button->setToolTip("Exit");
+        exit_button->setStyleSheet(
+            "QPushButton {"
+            "color: #cccccc;"
+            "background-color: #2d2d30;"
+            "border: 1px solid #3c3c3c;"
+            "border-radius: 6px;"
+            "font-size: 13px;"
+            "font-weight: bold;"
+            "}"
+            "QPushButton:hover {"
+            "background-color: #3a3a3d;"
+            "color: #ffffff;"
+            "}"
+            "QPushButton:pressed {"
+            "background-color: #005a9e;"
+            "}");
+        QObject::connect(exit_button, &QPushButton::clicked, frame, [frame] {
+            frame->window()->close();
+        });
+        exit_layout->addWidget(exit_button, 0, Qt::AlignCenter);
+        header->addWidget(exit_area);
+    }
     vbox->addLayout(header);
 
     auto* image = new QLabel;
@@ -833,7 +883,10 @@ public:
             QLabel* fps = nullptr;
             QWidget* panel = (i == kDemoPanel)
                 ? makeDemoImagePanel(&image, &fps)
-                : makePanel(kPanelTitles[i], &image, &fps);
+                : makePanel(kPanelTitles[i],
+                            &image,
+                            &fps,
+                            args_.show_exit_button && i == kPosePanel);
             grid->addWidget(panel, cells[i][0], cells[i][1]);
             image_labels_.push_back(image);
             fps_labels_.push_back(fps);
