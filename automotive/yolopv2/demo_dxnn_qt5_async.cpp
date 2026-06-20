@@ -123,6 +123,7 @@ struct Options
     float iou_thres = 0.45f;
     bool agnostic_nms = false;
     bool no_display = false;
+    bool show_exit_button = false;
     bool print_detections = false;
     bool save_video = false;
     std::string save_path;
@@ -395,6 +396,7 @@ void print_usage(const char *argv0)
         << "      --save PATH            Save annotated video\n"
         << "      --print-detections     Print boxes per frame\n"
         << "      --no-display           Do not open the GUI window\n"
+        << "      --exit-btn             Show a small exit button at the top-right\n"
         << "  -h, --help                 Show this help\n";
 }
 
@@ -587,6 +589,10 @@ bool parse_args(int argc, char **argv, Options *opt)
         else if (arg == "--no-display")
         {
             opt->no_display = true;
+        }
+        else if (arg == "--exit-btn")
+        {
+            opt->show_exit_button = true;
         }
         else if (arg == "-h" || arg == "--help")
         {
@@ -1423,8 +1429,8 @@ std::string default_save_path(const Options &opt)
 class FullscreenVideoWidget : public QWidget
 {
 public:
-    explicit FullscreenVideoWidget(QWidget *parent = nullptr)
-        : QWidget(parent)
+    explicit FullscreenVideoWidget(bool show_exit_button, QWidget *parent = nullptr)
+        : QWidget(parent), show_exit_button_(show_exit_button)
     {
         setWindowTitle(kWindowName);
         setWindowFlags(Qt::Window | Qt::FramelessWindowHint);
@@ -1481,7 +1487,10 @@ protected:
         painter.drawImage(target, frame_image_);
         painter.setPen(QColor(255, 255, 255, 36));
         painter.drawRect(target.adjusted(0, 0, -1, -1));
-        drawCloseButton(painter);
+        if (show_exit_button_)
+        {
+            drawCloseButton(painter);
+        }
     }
 
     void resizeEvent(QResizeEvent *event) override
@@ -1492,7 +1501,7 @@ protected:
 
     void mouseMoveEvent(QMouseEvent *event) override
     {
-        const bool hover = close_button_rect_.contains(event->pos());
+        const bool hover = show_exit_button_ && close_button_rect_.contains(event->pos());
         if (hover != close_hover_)
         {
             close_hover_ = hover;
@@ -1513,7 +1522,8 @@ protected:
 
     void mousePressEvent(QMouseEvent *event) override
     {
-        if (event->button() == Qt::LeftButton && close_button_rect_.contains(event->pos()))
+        if (show_exit_button_ && event->button() == Qt::LeftButton &&
+            close_button_rect_.contains(event->pos()))
         {
             requestStop();
             close();
@@ -1594,6 +1604,7 @@ private:
     }
 
     bool stop_requested_ = false;
+    bool show_exit_button_ = false;
     bool close_hover_ = false;
     QRect close_button_rect_;
     QImage frame_image_;
@@ -1694,7 +1705,7 @@ int main(int argc, char **argv)
 
         if (!opt.no_display)
         {
-            window = std::make_unique<FullscreenVideoWidget>();
+            window = std::make_unique<FullscreenVideoWidget>(opt.show_exit_button);
             window->showFullScreen();
             window->raise();
             window->activateWindow();
