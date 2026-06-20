@@ -21,6 +21,7 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <cctype>
 #include <cmath>
 #include <condition_variable>
 #include <cstdlib>
@@ -54,6 +55,8 @@ constexpr int kBevHeight = 608;
 constexpr int kHmWidth = 152;
 constexpr int kHmHeight = 152;
 constexpr int kNumClasses = 3;
+constexpr int kDefaultDetectionPaletteIndex = 0;  // --color 1 (aurora)
+constexpr double kBBoxLineWidthScale = 0.8;
 constexpr int kDownRatio = 4;
 constexpr float kMinX = 0.0F;
 constexpr float kMaxX = 50.0F;
@@ -71,11 +74,58 @@ constexpr const char* kTitleText =
 constexpr size_t kMaxPreparedQueue = 4;
 constexpr auto kPreparedQueuePollInterval = std::chrono::milliseconds(1);
 
-const std::array<cv::Scalar, 8> kColors = {
-    cv::Scalar(0, 255, 255), cv::Scalar(0, 0, 255), cv::Scalar(255, 0, 0),
-    cv::Scalar(255, 120, 0), cv::Scalar(255, 120, 120), cv::Scalar(0, 120, 0),
-    cv::Scalar(120, 255, 255), cv::Scalar(120, 0, 255),
+struct DetectionPalette {
+    const char* name;
+    std::array<cv::Scalar, kNumClasses> class_colors;
+    cv::Scalar heading;
 };
+
+// OpenCV colors use BGR ordering. Class order: Pedestrian, Car, Cyclist.
+const std::array<DetectionPalette, 5> kDetectionPalettes = {{
+    {"aurora",
+     {cv::Scalar(255, 230, 64), cv::Scalar(92, 238, 118), cv::Scalar(255, 70, 224)},
+     cv::Scalar(98, 234, 255)},
+    {"sunset",
+     {cv::Scalar(54, 178, 255), cv::Scalar(98, 234, 255), cv::Scalar(86, 124, 255)},
+     cv::Scalar(120, 210, 255)},
+    {"ocean",
+     {cv::Scalar(255, 214, 72), cv::Scalar(210, 238, 88), cv::Scalar(255, 124, 88)},
+     cv::Scalar(106, 252, 214)},
+    {"neon",
+     {cv::Scalar(178, 255, 42), cv::Scalar(255, 74, 238), cv::Scalar(70, 240, 126)},
+     cv::Scalar(92, 255, 238)},
+    {"graphite",
+     {cv::Scalar(236, 222, 186), cv::Scalar(146, 226, 255), cv::Scalar(184, 164, 255)},
+     cv::Scalar(210, 228, 238)},
+}};
+
+std::string detectionPaletteNames() {
+    std::ostringstream names;
+    for (size_t i = 0; i < kDetectionPalettes.size(); ++i) {
+        if (i > 0) {
+            names << ", ";
+        }
+        names << (i + 1) << "=" << kDetectionPalettes[i].name;
+    }
+    return names.str();
+}
+
+int detectionPaletteIndex(std::string value) {
+    if (value.size() == 1 && value[0] >= '1' &&
+        value[0] < '1' + static_cast<int>(kDetectionPalettes.size())) {
+        return value[0] - '1';
+    }
+
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+    });
+    for (size_t i = 0; i < kDetectionPalettes.size(); ++i) {
+        if (value == kDetectionPalettes[i].name) {
+            return static_cast<int>(i);
+        }
+    }
+    return -1;
+}
 
 // UI palette aligned with paddle-ocr/cam-ppocr-v6.
 const cv::Scalar kUiBg(30, 30, 30);
@@ -113,6 +163,7 @@ struct Config {
     int output_width = 608;
     bool full_screen = false;
     bool exit_btn = false;
+    int color_palette_index = kDefaultDetectionPaletteIndex;
     bool loop = false;
     bool debug = false;
     double timing_cpu_scale = 1.0;
@@ -456,6 +507,7 @@ Config parseArgs(int argc, char* argv[]) {
     config.repo_root = fs::absolute(fs::path(SFA3D_REPO_ROOT));
 
     std::string pretrained_path = kDefaultDemoCheckpoint;
+    std::string color = kDetectionPalettes[kDefaultDetectionPaletteIndex].name;
     bool full_screen_dash = false;
 
     cxxopts::Options options("demo_dxnn_async_cpp", "SFA3D DXNN async demo implemented in C++");
@@ -486,6 +538,9 @@ Config parseArgs(int argc, char* argv[]) {
             cxxopts::value<bool>(full_screen_dash)->default_value("false"))
         ("exit-btn", "Draw a small exit button at the top-right of the display",
             cxxopts::value<bool>(config.exit_btn)->default_value("false"))
+        ("color", "3D BBox palette: " + detectionPaletteNames(),
+            cxxopts::value<std::string>(color)->default_value(
+                kDetectionPalettes[kDefaultDetectionPaletteIndex].name))
         ("loop", "Loop the input sequence forever",
             cxxopts::value<bool>(config.loop)->default_value("false"))
         ("debug", "Enable debug logs and stage timing instrumentation",
@@ -501,6 +556,10 @@ Config parseArgs(int argc, char* argv[]) {
     }
 
     config.full_screen = config.full_screen || full_screen_dash;
+    config.color_palette_index = detectionPaletteIndex(color);
+    if (config.color_palette_index < 0) {
+        throw std::runtime_error("--color expects one of: " + detectionPaletteNames());
+    }
     if (config.timing_cpu_scale <= 0.0) {
         throw std::runtime_error("--timing-cpu-scale must be greater than 0");
     }
@@ -1044,16 +1103,68 @@ std::vector<cv::Point> getCorners(float x, float y, float w, float l, float yaw)
     return result;
 }
 
-void drawRotatedBox(cv::Mat& img, float x, float y, float w, float l, float yaw, const cv::Scalar& color) {
-    const auto corners = getCorners(x, y, w, l, yaw);
-    cv::polylines(img, corners, true, color, 2);
-    cv::line(img, corners[0], corners[3], cv::Scalar(255, 255, 0), 2);
+void blendBBoxLine(cv::Mat& image, cv::Point from, cv::Point to,
+                   const cv::Scalar& color, int thickness, double opacity) {
+    if (image.empty() || thickness <= 0 || opacity <= 0.0) {
+        return;
+    }
+
+    const cv::Rect image_rect(0, 0, image.cols, image.rows);
+    if (!cv::clipLine(image_rect, from, to)) {
+        return;
+    }
+
+    const int padding = thickness + 2;
+    const int left = std::max(0, std::min(from.x, to.x) - padding);
+    const int top = std::max(0, std::min(from.y, to.y) - padding);
+    const int right = std::min(image.cols - 1, std::max(from.x, to.x) + padding);
+    const int bottom = std::min(image.rows - 1, std::max(from.y, to.y) + padding);
+    const cv::Rect bounds(left, top, right - left + 1, bottom - top + 1);
+    cv::Mat target = image(bounds);
+    cv::Mat overlay = target.clone();
+    const cv::Point offset = bounds.tl();
+    cv::line(overlay, from - offset, to - offset, color, thickness, cv::LINE_AA);
+    cv::addWeighted(overlay, opacity, target, 1.0 - opacity, 0.0, target);
 }
 
-void drawPredictions(cv::Mat& img, const DetectionsByClass& detections) {
+void drawBBoxLine(cv::Mat& image, const cv::Point& from, const cv::Point& to,
+                  const cv::Scalar& color, int original_thickness = 2) {
+    const double scaled_thickness = original_thickness * kBBoxLineWidthScale;
+    const int inner_thickness = static_cast<int>(std::floor(scaled_thickness));
+    const int outer_thickness = static_cast<int>(std::ceil(scaled_thickness));
+    const double outer_opacity = scaled_thickness - inner_thickness;
+
+    if (outer_thickness > inner_thickness && outer_opacity > 0.0) {
+        blendBBoxLine(image, from, to, color, outer_thickness, outer_opacity);
+    }
+    if (inner_thickness > 0) {
+        cv::line(image, from, to, color, inner_thickness, cv::LINE_AA);
+    }
+}
+
+void drawBBoxPolyline(cv::Mat& image, const std::vector<cv::Point>& points,
+                      const cv::Scalar& color) {
+    if (points.size() < 2) {
+        return;
+    }
+    for (size_t i = 0; i < points.size(); ++i) {
+        drawBBoxLine(image, points[i], points[(i + 1) % points.size()], color);
+    }
+}
+
+void drawRotatedBox(cv::Mat& img, float x, float y, float w, float l, float yaw,
+                    const cv::Scalar& color, const cv::Scalar& heading_color) {
+    const auto corners = getCorners(x, y, w, l, yaw);
+    drawBBoxPolyline(img, corners, color);
+    drawBBoxLine(img, corners[0], corners[3], heading_color);
+}
+
+void drawPredictions(cv::Mat& img, const DetectionsByClass& detections,
+                     const DetectionPalette& palette) {
     for (int cls = 0; cls < kNumClasses; ++cls) {
         for (const auto& det : detections[static_cast<size_t>(cls)]) {
-            drawRotatedBox(img, det.x, det.y, det.w, det.l, det.yaw, kColors[static_cast<size_t>(cls)]);
+            drawRotatedBox(img, det.x, det.y, det.w, det.l, det.yaw,
+                           palette.class_colors[static_cast<size_t>(cls)], palette.heading);
         }
     }
 }
@@ -1176,33 +1287,28 @@ std::vector<cv::Point> projectToImage(const std::array<std::array<float, 3>, 8>&
 }
 
 void drawBox3d(cv::Mat& image, const std::vector<cv::Point>& corners, const cv::Scalar& color) {
-    static const int face_idx[4][4] = {
-        {0, 1, 5, 4},
-        {1, 2, 6, 5},
-        {2, 3, 7, 6},
-        {3, 0, 4, 7},
+    static const int edges[12][2] = {
+        {0, 1}, {1, 2}, {2, 3}, {3, 0},
+        {4, 5}, {5, 6}, {6, 7}, {7, 4},
+        {0, 4}, {1, 5}, {2, 6}, {3, 7},
     };
 
-    for (int ind_f = 3; ind_f >= 0; --ind_f) {
-        const auto& face = face_idx[ind_f];
-        for (int j = 0; j < 4; ++j) {
-            cv::line(image, corners[face[j]], corners[face[(j + 1) % 4]], color, 2, cv::LINE_AA);
-        }
-        if (ind_f == 0) {
-            cv::line(image, corners[face[0]], corners[face[2]], color, 1, cv::LINE_AA);
-            cv::line(image, corners[face[1]], corners[face[3]], color, 1, cv::LINE_AA);
-        }
+    for (const auto& edge : edges) {
+        drawBBoxLine(image, corners[edge[0]], corners[edge[1]], color);
     }
+    drawBBoxLine(image, corners[0], corners[5], color, 1);
+    drawBBoxLine(image, corners[1], corners[4], color, 1);
 }
 
-void showRgbImageWithBoxes(cv::Mat& img_bgr, const std::vector<KittiDetection>& labels, const Calibration& calib) {
+void showRgbImageWithBoxes(cv::Mat& img_bgr, const std::vector<KittiDetection>& labels,
+                           const Calibration& calib, const DetectionPalette& palette) {
     for (const auto& label : labels) {
         if (label.z < 2.0F || label.cls_id < 0) {
             continue;
         }
         const auto corners_3d = computeBox3d(label);
         const auto corners_2d = projectToImage(corners_3d, calib);
-        drawBox3d(img_bgr, corners_2d, kColors[static_cast<size_t>(label.cls_id)]);
+        drawBox3d(img_bgr, corners_2d, palette.class_colors[static_cast<size_t>(label.cls_id)]);
     }
 }
 
@@ -1365,6 +1471,7 @@ void drawDetectionBar(cv::Mat& canvas, int x, int y, int width, const std::strin
 }
 
 void fillFullscreenSidePanels(cv::Mat& img, const Config& config, const SampleResult& sample, double display_fps) {
+    const auto& palette = kDetectionPalettes.at(static_cast<size_t>(config.color_palette_index));
     constexpr double target_aspect = 16.0 / 9.0;
     const int min_panel_width = 280;
     const int target_width = std::max(static_cast<int>(std::round(static_cast<double>(img.rows) * target_aspect)),
@@ -1435,11 +1542,12 @@ void fillFullscreenSidePanels(cv::Mat& img, const Config& config, const SampleRe
     drawHudSectionTitle(canvas, "CLASS SUMMARY", right_x, right_y, right_panel_width);
     right_y += 42;
     for (int cls = 0; cls < kNumClasses; ++cls) {
-        cv::circle(canvas, cv::Point(right_x + 8, right_y - 7), 5, kColors[static_cast<size_t>(cls)], cv::FILLED, cv::LINE_AA);
+        const cv::Scalar& class_color = palette.class_colors[static_cast<size_t>(cls)];
+        cv::circle(canvas, cv::Point(right_x + 8, right_y - 7), 5, class_color, cv::FILLED, cv::LINE_AA);
         drawDetectionBar(canvas, right_x + 20, right_y, right_panel_width - 20, class_names[static_cast<size_t>(cls)],
                          static_cast<int>(front[static_cast<size_t>(cls)].size()),
                          static_cast<int>(back[static_cast<size_t>(cls)].size()),
-                         kColors[static_cast<size_t>(cls)]);
+                         class_color);
         right_y += 56;
     }
 
@@ -1599,14 +1707,16 @@ cv::Mat renderSampleImage(const Config& config, const Calibration& calib, const 
         throw std::runtime_error("Cannot render incomplete sample");
     }
 
+    const auto& palette = kDetectionPalettes.at(static_cast<size_t>(config.color_palette_index));
+
     cv::Mat front_bevmap = bevToMat(sample.front_bevmap);
     cv::resize(front_bevmap, front_bevmap, cv::Size(kBevWidth, kBevHeight));
-    drawPredictions(front_bevmap, *sample.front_detections);
+    drawPredictions(front_bevmap, *sample.front_detections, palette);
     cv::rotate(front_bevmap, front_bevmap, cv::ROTATE_90_COUNTERCLOCKWISE);
 
     cv::Mat back_bevmap = bevToMat(sample.back_bevmap);
     cv::resize(back_bevmap, back_bevmap, cv::Size(kBevWidth, kBevHeight));
-    drawPredictions(back_bevmap, *sample.back_detections);
+    drawPredictions(back_bevmap, *sample.back_detections, palette);
     cv::rotate(back_bevmap, back_bevmap, cv::ROTATE_90_CLOCKWISE);
 
     cv::Mat full_bev;
@@ -1618,7 +1728,7 @@ cv::Mat renderSampleImage(const Config& config, const Calibration& calib, const 
     auto kitti_dets = convertDetToRealValues(*sample.front_detections);
     if (!kitti_dets.empty()) {
         kitti_dets = lidarToCameraBox(kitti_dets, calib);
-        showRgbImageWithBoxes(img_bgr, kitti_dets, calib);
+        showRgbImageWithBoxes(img_bgr, kitti_dets, calib, palette);
     }
     cv::resize(img_bgr, img_bgr, cv::Size(kBevWidth * 2, 375));
 
@@ -2031,6 +2141,9 @@ void renderLoop(const Config& config, BlockingQueue<RenderItem>& render_queue, s
 int main(int argc, char* argv[]) {
     try {
         Config config = parseArgs(argc, argv);
+        std::cout << "3D BBox palette: "
+                  << kDetectionPalettes.at(static_cast<size_t>(config.color_palette_index)).name
+                  << std::endl;
         int qt_argc = 1;
         QApplication app(qt_argc, argv);
         QApplication::setApplicationName("SFA3D DXNN Demo");
