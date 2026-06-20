@@ -26,7 +26,6 @@
 #include <QPainterPath>
 #include <QPen>
 #include <QPushButton>
-#include <QResizeEvent>
 #include <QShowEvent>
 #include <QSizePolicy>
 #include <QTimer>
@@ -72,7 +71,6 @@ constexpr int kMobedStaticPictureH = 530;
 constexpr int kExitButtonW = 32;
 constexpr int kExitButtonH = 28;
 constexpr int kExitButtonMargin = 8;
-constexpr int kExitButtonTopReserve = kExitButtonH + 2 * kExitButtonMargin;
 
 const char *kUsage =
     "Face Recognition Demo\n"
@@ -660,7 +658,8 @@ private:
     int gallery_count_ = 0;
 };
 
-QFrame *make_panel(const QString &title, BgrImageView **image_view, QLabel **fps_label)
+QFrame *make_panel(const QString &title, BgrImageView **image_view, QLabel **fps_label,
+                   bool show_exit_button = false)
 {
     auto *frame = new QFrame;
     frame->setObjectName("robotics_panel");
@@ -700,7 +699,7 @@ QFrame *make_panel(const QString &title, BgrImageView **image_view, QLabel **fps
     fps->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
     fps->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Fixed);
     fps->setFocusPolicy(Qt::NoFocus);
-    fps->setStyleSheet(
+    fps->setStyleSheet(QString(
         "QLabel#robotics_panel_fps {"
         "color: #9aa3b2;"
         "font-size: 12px;"
@@ -709,11 +708,55 @@ QFrame *make_panel(const QString &title, BgrImageView **image_view, QLabel **fps
         "padding: 8px 12px 6px 8px;"
         "background-color: #1e222b;"
         "border-bottom: 1px solid #353b48;"
-        "border-top-right-radius: 7px;"
-        "}");
+        "%1"
+        "}").arg(show_exit_button ? "" : "border-top-right-radius: 7px;"));
 
     header->addWidget(title_label, 1);
     header->addWidget(fps, 0);
+
+    if (show_exit_button)
+    {
+        auto *exit_area = new QWidget;
+        exit_area->setObjectName("robotics_panel_exit_area");
+        exit_area->setFixedWidth(kExitButtonW + 2 * kExitButtonMargin);
+        exit_area->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
+        exit_area->setStyleSheet(
+            "QWidget#robotics_panel_exit_area {"
+            "background-color: #1e222b;"
+            "border-bottom: 1px solid #353b48;"
+            "border-top-right-radius: 7px;"
+            "}");
+
+        auto *exit_layout = new QHBoxLayout(exit_area);
+        exit_layout->setContentsMargins(kExitButtonMargin, 0, kExitButtonMargin, 0);
+        exit_layout->setSpacing(0);
+
+        auto *exit_button = new QPushButton("X");
+        exit_button->setFixedSize(kExitButtonW, kExitButtonH);
+        exit_button->setFocusPolicy(Qt::NoFocus);
+        exit_button->setToolTip("Exit");
+        exit_button->setStyleSheet(
+            "QPushButton {"
+            "color: #cccccc;"
+            "background-color: #2d2d30;"
+            "border: 1px solid #3c3c3c;"
+            "border-radius: 6px;"
+            "font-size: 13px;"
+            "font-weight: bold;"
+            "}"
+            "QPushButton:hover {"
+            "background-color: #3a3a3d;"
+            "color: #ffffff;"
+            "}"
+            "QPushButton:pressed {"
+            "background-color: #005a9e;"
+            "}");
+        QObject::connect(exit_button, &QPushButton::clicked, frame, [frame]() {
+            frame->window()->close();
+        });
+        exit_layout->addWidget(exit_button, 0, Qt::AlignCenter);
+        header->addWidget(exit_area);
+    }
     vbox->addLayout(header);
 
     auto *image = new BgrImageView;
@@ -822,48 +865,21 @@ public:
 
         auto *grid = new QGridLayout(central);
         grid->setSpacing(0);
-        grid->setContentsMargins(0, options_.showExitButton ? kExitButtonTopReserve : 0, 0, 0);
+        grid->setContentsMargins(0, 0, 0, 0);
         grid->setColumnStretch(0, 1);
         grid->setColumnStretch(1, 1);
         grid->setRowStretch(0, 1);
         grid->setRowStretch(1, 1);
 
         grid->addWidget(make_panel(kPoseSegmentationWindowTitle, &pose_view_, &pose_fps_label_), 0, 0);
-        grid->addWidget(make_panel(kFaceRecognitionWindowTitle, &face_view_, &face_fps_label_), 0, 1);
+        grid->addWidget(make_panel(kFaceRecognitionWindowTitle, &face_view_, &face_fps_label_,
+                                   options_.showExitButton), 0, 1);
         grid->addWidget(make_panel(kMobedDetectionWindowTitle, &mobed_view_, &mobed_fps_label_), 1, 0);
         grid->addWidget(make_gallery_panel(&gallery_view_, &gallery_fps_label_), 1, 1);
 
         if (gallery_view_ != nullptr && !mobed_static_picture.empty())
         {
             gallery_view_->SetBaseFrame(std::move(mobed_static_picture));
-        }
-
-        if (options_.showExitButton)
-        {
-            exit_button_ = new QPushButton("X", central);
-            exit_button_->setFixedSize(kExitButtonW, kExitButtonH);
-            exit_button_->setFocusPolicy(Qt::NoFocus);
-            exit_button_->setToolTip("Exit");
-            exit_button_->setStyleSheet(
-                "QPushButton {"
-                "color: #cccccc;"
-                "background-color: #2d2d30;"
-                "border: 1px solid #3c3c3c;"
-                "border-radius: 6px;"
-                "font-size: 13px;"
-                "font-weight: bold;"
-                "}"
-                "QPushButton:hover {"
-                "background-color: #3a3a3d;"
-                "color: #ffffff;"
-                "}"
-                "QPushButton:pressed {"
-                "background-color: #005a9e;"
-                "}");
-            connect(exit_button_, &QPushButton::clicked, this, [this]() {
-                close();
-            });
-            exit_button_->raise();
         }
 
         frame_timer_ = new QTimer(this);
@@ -910,12 +926,6 @@ protected:
     {
         Shutdown();
         event->accept();
-    }
-
-    void resizeEvent(QResizeEvent *event) override
-    {
-        QMainWindow::resizeEvent(event);
-        PositionExitButton();
     }
 
     void showEvent(QShowEvent *event) override
@@ -1125,17 +1135,6 @@ private:
         }
     }
 
-    void PositionExitButton()
-    {
-        if (exit_button_ == nullptr || centralWidget() == nullptr)
-        {
-            return;
-        }
-        exit_button_->move(centralWidget()->width() - exit_button_->width() - kExitButtonMargin,
-                           kExitButtonMargin);
-        exit_button_->raise();
-    }
-
     AppOptions options_;
     cv::VideoCapture *cap_ = nullptr;
     FaceRecognitionVideoSession *face_session_ = nullptr;
@@ -1152,7 +1151,6 @@ private:
     QLabel *face_fps_label_ = nullptr;
     QLabel *mobed_fps_label_ = nullptr;
     QLabel *gallery_fps_label_ = nullptr;
-    QPushButton *exit_button_ = nullptr;
     QTimer *frame_timer_ = nullptr;
     std::atomic<bool> closing_{false};
 };

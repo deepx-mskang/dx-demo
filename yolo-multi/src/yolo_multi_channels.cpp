@@ -13,6 +13,7 @@
 
 #include <string.h>
 #include <errno.h>
+#include <atomic>
 #include <iostream>
 #include <cxxopts.hpp>
 #include <opencv2/opencv.hpp>
@@ -49,6 +50,81 @@ inline void notify_launcher_ready() {
 
 static bool g_full_screan = false;
 static bool g_no_display = false;
+static bool g_show_exit_button = false;
+static std::atomic<bool> g_exit_requested{false};
+static std::atomic<bool> g_exit_button_hovered{false};
+static std::atomic<bool> g_exit_button_pressed{false};
+static cv::Rect g_exit_button_rect;
+
+static void drawFilledRoundedRect(cv::Mat& image, const cv::Rect& rect,
+                                  const cv::Scalar& color, int radius)
+{
+    if (image.empty() || rect.width <= 0 || rect.height <= 0)
+        return;
+
+    radius = std::max(0, std::min(radius, std::min(rect.width, rect.height) / 2));
+    const int right = rect.x + rect.width - 1;
+    const int bottom = rect.y + rect.height - 1;
+    cv::rectangle(image, cv::Point(rect.x + radius, rect.y),
+                  cv::Point(right - radius, bottom), color, cv::FILLED, cv::LINE_AA);
+    cv::rectangle(image, cv::Point(rect.x, rect.y + radius),
+                  cv::Point(right, bottom - radius), color, cv::FILLED, cv::LINE_AA);
+    cv::circle(image, cv::Point(rect.x + radius, rect.y + radius), radius,
+               color, cv::FILLED, cv::LINE_AA);
+    cv::circle(image, cv::Point(right - radius, rect.y + radius), radius,
+               color, cv::FILLED, cv::LINE_AA);
+    cv::circle(image, cv::Point(rect.x + radius, bottom - radius), radius,
+               color, cv::FILLED, cv::LINE_AA);
+    cv::circle(image, cv::Point(right - radius, bottom - radius), radius,
+               color, cv::FILLED, cv::LINE_AA);
+}
+
+static void drawExitButton(cv::Mat& image)
+{
+    const cv::Scalar border(60, 60, 60);       // #3c3c3c
+    const cv::Scalar normal(48, 45, 45);       // #2d2d30
+    const cv::Scalar hover(61, 58, 58);        // #3a3a3d
+    const cv::Scalar pressed(158, 90, 0);      // #005a9e
+    const cv::Scalar text = g_exit_button_hovered.load()
+        ? cv::Scalar(255, 255, 255)
+        : cv::Scalar(204, 204, 204);
+    const cv::Scalar fill = g_exit_button_pressed.load()
+        ? pressed
+        : (g_exit_button_hovered.load() ? hover : normal);
+
+    drawFilledRoundedRect(image, g_exit_button_rect, border, 6);
+    const cv::Rect inner(g_exit_button_rect.x + 1, g_exit_button_rect.y + 1,
+                         g_exit_button_rect.width - 2, g_exit_button_rect.height - 2);
+    drawFilledRoundedRect(image, inner, fill, 5);
+
+    int baseline = 0;
+    const double font_scale = 0.45;
+    const int thickness = 1;
+    const cv::Size text_size = cv::getTextSize(
+        "X", cv::FONT_HERSHEY_SIMPLEX, font_scale, thickness, &baseline);
+    const cv::Point origin(
+        g_exit_button_rect.x + (g_exit_button_rect.width - text_size.width) / 2,
+        g_exit_button_rect.y + (g_exit_button_rect.height + text_size.height) / 2 - 1);
+    cv::putText(image, "X", origin, cv::FONT_HERSHEY_SIMPLEX,
+                font_scale, text, thickness, cv::LINE_AA);
+}
+
+static void onDisplayMouse(int event, int x, int y, int, void*)
+{
+    const bool inside = g_exit_button_rect.contains(cv::Point(x, y));
+    g_exit_button_hovered.store(inside);
+
+    if (event == cv::EVENT_LBUTTONDOWN)
+    {
+        g_exit_button_pressed.store(inside);
+    }
+    else if (event == cv::EVENT_LBUTTONUP)
+    {
+        const bool was_pressed = g_exit_button_pressed.exchange(false);
+        if (was_pressed && inside)
+            g_exit_requested.store(true);
+    }
+}
 
 /**
  * @brief AppConfig Definition
@@ -101,6 +177,7 @@ const char* usage =
 "                      e.g. sudo yolo_multi -c _multi_od_.json --no-display\n"
 "      --window_size   FPS by average over the last {window_size} seconds (default: 60)\n"
 "                      e.g. sudo yolo_multi -c _multi_od_.json --window_size 60\n"
+"      --exit-btn      show a small exit button in the top-right title bar\n"
 "  -h, --help          show help\n"
 ;
 
@@ -305,6 +382,7 @@ DXRT_TRY_CATCH_BEGIN
         ("t, test", "test mode", cxxopts::value<bool>(loggingVersion)->default_value("false"))
         ("no-display", "run without display output (headless mode)", cxxopts::value<bool>(g_no_display)->default_value("false"))
         ("window_size", "FPS by average over the last {window_size} seconds (default: 60)", cxxopts::value<double>(window_size)->default_value("60"))
+        ("exit-btn", "show a small exit button in the top-right title bar", cxxopts::value<bool>(g_show_exit_button)->default_value("false"))
         ("h, help", "print usage")
     ;
     auto cmd = options.parse(argc, argv);
@@ -331,6 +409,15 @@ DXRT_TRY_CATCH_BEGIN
 
     const int BOARD_WIDTH = appConfig.board_width;
     const int BOARD_HEIGHT = appConfig.board_height;
+    constexpr int EXIT_BUTTON_WIDTH = 32;
+    constexpr int EXIT_BUTTON_HEIGHT = 28;
+    constexpr int EXIT_BUTTON_MARGIN = 8;
+    constexpr int TITLE_BAR_HEIGHT = 50;
+    g_exit_button_rect = cv::Rect(
+        BOARD_WIDTH - EXIT_BUTTON_WIDTH - EXIT_BUTTON_MARGIN,
+        (TITLE_BAR_HEIGHT - EXIT_BUTTON_HEIGHT) / 2,
+        EXIT_BUTTON_WIDTH,
+        EXIT_BUTTON_HEIGHT);
 
     int div = devideBoard(appConfig.video_sources.size());
     LOG_VALUE(div);
@@ -466,6 +553,9 @@ DXRT_TRY_CATCH_BEGIN
 #if !__riscv
     if (!g_no_display) {
         cv::namedWindow(DISPLAY_WINDOW_NAME, cv::WINDOW_NORMAL);
+        if (g_show_exit_button) {
+            cv::setMouseCallback(DISPLAY_WINDOW_NAME, onDisplayMouse);
+        }
     }
 #endif
 
@@ -640,6 +730,10 @@ DXRT_TRY_CATCH_BEGIN
                 snprintf(subCaption, sizeof(subCaption), "        AI Model : %s         FPS : --      FPS/Stream: --   ", appConfig.model_name.c_str());
             cv::putText(outFrame, subCaption, cv::Point(500, 35), cv::FONT_HERSHEY_SIMPLEX, 1, cv::Scalar(255, 255, 255), 2, cv::LINE_AA);
         }
+        if(g_show_exit_button && !g_no_display)
+        {
+            drawExitButton(outFrame);
+        }
         sl.frameNumber = std::min(allFrameCount, (uint64_t)UINT_MAX);  // 오버플로우 방지
         sl.runningTime = duration;
         if (loggingVersion)
@@ -665,7 +759,7 @@ DXRT_TRY_CATCH_BEGIN
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
 #endif
-        if(key == 0x1B || key == 0x71) //'ESC'
+        if(key == 0x1B || key == 0x71 || g_exit_requested.load()) //'ESC', 'q', exit button
         {
             sl.threadStatus.store(-1);
             for(auto &app:apps)
