@@ -54,6 +54,7 @@ struct AppOptions {
     std::string video_path = "video1.mp4";
     bool full_screen = false;
     bool show_exit_button = false;
+    bool loop = false;
 };
 
 struct TensorOutput {
@@ -114,7 +115,7 @@ void print_usage(const char* argv0)
 {
     std::cout
         << "Usage: " << argv0 << " [--backend onnx|dxnn] --model <PATH> --video <PATH> [--full_screen]\n"
-        << "                 [--exit-btn]\n"
+        << "                 [--exit-btn] [--loop]\n"
         << "\n"
         << "Example:\n"
         << "  " << argv0 << " --backend dxnn --model assets/mixformer_sim.dxnn --video assets/drone_test.mp4\n";
@@ -155,6 +156,8 @@ AppOptions parse_args(int argc, char** argv)
             options.full_screen = true;
         } else if (arg == "--exit-btn") {
             options.show_exit_button = true;
+        } else if (arg == "--loop") {
+            options.loop = true;
         } else {
             throw std::runtime_error("unknown argument: " + arg);
         }
@@ -902,15 +905,19 @@ private:
             return;
         }
 
-        cv::Mat frame;
-        if (!cap_.read(frame) || frame.empty()) {
-            timer_.stop();
-            mode_ = Mode::Finished;
-            update();
-            return;
-        }
-
         try {
+            cv::Mat frame;
+            if (!cap_.read(frame) || frame.empty()) {
+                if (options_.loop) {
+                    restart_tracking_loop();
+                    return;
+                }
+                timer_.stop();
+                mode_ = Mode::Finished;
+                update();
+                return;
+            }
+
             const cv::Rect bbox = tracker_->update(frame);
             latest_bbox_ = cv::Rect2f(static_cast<float>(bbox.x),
                                       static_cast<float>(bbox.y),
@@ -927,6 +934,28 @@ private:
             std::cerr << "Error: " << e.what() << std::endl;
             update();
         }
+    }
+
+    void restart_tracking_loop()
+    {
+        cv::Mat first_frame;
+        cap_.set(cv::CAP_PROP_POS_FRAMES, 0);
+        if (!cap_.read(first_frame) || first_frame.empty()) {
+            cap_.release();
+            if (!cap_.open(options_.video_path) ||
+                !cap_.read(first_frame) || first_frame.empty()) {
+                throw std::runtime_error("cannot restart video loop: " + options_.video_path);
+            }
+        }
+
+        current_frame_ = std::move(first_frame);
+        frame_image_ = mat_to_qimage(current_frame_);
+        tracker_->init(current_frame_, selected_roi_);
+        latest_bbox_ = selected_roi_;
+        display_fps_ = 0.0;
+        last_frame_time_ = std::chrono::steady_clock::now();
+        std::cout << "[Loop] Restarted video from the first frame." << std::endl;
+        update();
     }
 
     void update_fps()
