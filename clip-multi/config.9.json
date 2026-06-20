@@ -1,0 +1,71 @@
+{
+  "models": {
+    "text_encoder": "../clip-single/onnx/ViT-L-14-quickgelu-dfn2b-text.onnx",
+    "image_encoder": "../clip-single/dxnn/ViT-L-14-quickgelu-dfn2b.dxnn",
+    "bpe_vocab": "../clip-single/assets/bpe_simple_vocab_16e6.txt.gz",
+    "model_name": "ViT-L-14-quickgelu"
+  },
+  "capture": {
+    "width": 640,
+    "height": 360,
+    "fps": 24,
+    "skip_frames": 12
+  },
+  "no_normalize": false,
+  "streams": [
+    {
+      "name": "Channel 1",
+      "source": "../clip-single/assets/CLIP-demo.mp4",
+      "threshold": 0.25,
+      "texts": ["Cars are driving on the road", "A car accident occurred"]
+    },
+    {
+      "name": "Channel 2",
+      "source": "../clip-single/assets/CLIP-demo.mp4",
+      "threshold": 0.25,
+      "texts": ["A car is on fire", "Black smoke is rising"]
+    },
+    {
+      "name": "Channel 3",
+      "source": "../clip-single/assets/CLIP-demo.mp4",
+      "threshold": 0.25,
+      "texts": ["A massive explosion occurred", "A concrete structure collapsed"]
+    },
+    {
+      "name": "Channel 4",
+      "source": "../clip-single/assets/CLIP-demo.mp4",
+      "threshold": 0.25,
+      "texts": ["A crowded outdoor area", "People are walking near cars"]
+    },
+    {
+      "name": "Channel 5",
+      "source": "../clip-single/assets/CLIP-demo.mp4",
+      "threshold": 0.25,
+      "texts": ["A person is lying on the floor", "A person has fallen down"]
+    },
+    {
+      "name": "Channel 6",
+      "source": "../clip-single/assets/CLIP-demo.mp4",
+      "threshold": 0.25,
+      "texts": ["Emergency vehicles are present", "A dangerous event is happening"]
+    },
+    {
+      "name": "Channel 7",
+      "source": "../clip-single/assets/CLIP-demo.mp4",
+      "threshold": 0.25,
+      "texts": ["A normal traffic scene", "Vehicles are moving normally"]
+    },
+    {
+      "name": "Channel 8",
+      "source": "../clip-single/assets/CLIP-demo.mp4",
+      "threshold": 0.25,
+      "texts": ["Fire and smoke are visible", "Bright flames are visible"]
+    },
+    {
+      "name": "Channel 9",
+      "source": "../clip-single/assets/CLIP-demo.mp4",
+      "threshold": 0.25,
+      "texts": ["An unusual situation is occurring", "The scene appears safe"]
+    }
+  ]
+}
