@@ -641,7 +641,7 @@ public:
         frame_image_ = mat_to_qimage(current_frame_);
 
         std::cout << "[" << backend_label(options_.backend)
-                  << " Mode] Drag to select the object to track and press ENTER/SPACE."
+                  << " Mode] Drag to select the object to track; tracking starts on release."
                   << std::endl;
 
         connect(&timer_, &QTimer::timeout, this, [this]() {
@@ -712,7 +712,7 @@ protected:
             widget_to_image_clamped(event->pos(), drag_current_);
             selected_roi_ = normalized_rect(drag_start_, drag_current_);
             dragging_ = false;
-            update();
+            start_tracking();
             return;
         }
         QWidget::mouseReleaseEvent(event);
@@ -726,12 +726,6 @@ protected:
         }
         if (event->key() == Qt::Key_F) {
             isFullScreen() ? showNormal() : showFullScreen();
-            return;
-        }
-        if (mode_ == Mode::Selecting &&
-            (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter ||
-             event->key() == Qt::Key_Space)) {
-            start_tracking();
             return;
         }
         QWidget::keyPressEvent(event);
@@ -871,7 +865,7 @@ private:
         QString status;
         switch (mode_) {
         case Mode::Selecting:
-            status = "Select target ROI, then press Enter";
+            status = "Drag over a target to start tracking";
             break;
         case Mode::Tracking:
             status = QString("Tracking  |  %1 FPS").arg(display_fps_, 0, 'f', 1);
@@ -890,6 +884,7 @@ private:
     {
         if (selected_roi_.width < 2.0f || selected_roi_.height < 2.0f) {
             std::cout << "Invalid bounding box. Select a larger target region." << std::endl;
+            update();
             return;
         }
 
