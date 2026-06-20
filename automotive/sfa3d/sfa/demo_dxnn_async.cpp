@@ -1861,6 +1861,16 @@ private:
             option.boundOption = dxrt::InferenceOption::BOUND_OPTION::NPU_ALL;
             option.bufferCount = kMaxInferenceQueue;
 
+#if defined(DXRT_NFH_ACCELERATION_AVAILABLE) || defined(DXRT_CPU_OP_ACCELERATION_AVAILABLE)
+            auto& config = dxrt::Configuration::GetInstance();
+#ifdef DXRT_NFH_ACCELERATION_AVAILABLE
+            config.SetEnable(dxrt::Configuration::ITEM::NFH_ACCELERATION, true);
+#endif
+#ifdef DXRT_CPU_OP_ACCELERATION_AVAILABLE
+            config.SetEnable(dxrt::Configuration::ITEM::CPU_OP_ACCELERATION, true);
+#endif
+#endif
+
             dxrt::InferenceEngine engine(config_.pretrained_path.string(), option);
             if (config_.debug) {
                 std::cout << "Loaded DXNN model from " << config_.pretrained_path << "\n" << std::endl;

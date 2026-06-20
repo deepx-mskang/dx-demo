@@ -158,8 +158,11 @@ LAUNCHER_ITEMS = [
             "ko": "실시간 도로 장면 인식",
         },
         "image": "assets/demo-automotive.png",
-        "video_script": "../scripts/run_PIDNet.sh",
-        "camera_script": "../scripts/run_YOLOPv2.sh",
+        "video_label": "PIDNet",
+        "camera_label": "YOLOPv2",
+        "video_script": "../scripts/run_automotive_pidnet.sh",
+        "camera_script": "../scripts/run_automotive_yolopv2.sh",
+        "extra_buttons": [{"label": "SFA3D", "script": "../scripts/run_automotive_sfa3d.sh"}],
         "loading_sec": 5,
     },
     {

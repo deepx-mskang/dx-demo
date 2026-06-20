@@ -1672,6 +1672,17 @@ int main(int argc, char **argv)
         }
 
         dxrt::InferenceOption io;
+
+#if defined(DXRT_NFH_ACCELERATION_AVAILABLE) || defined(DXRT_CPU_OP_ACCELERATION_AVAILABLE)
+        auto& config = dxrt::Configuration::GetInstance();
+#ifdef DXRT_NFH_ACCELERATION_AVAILABLE
+        config.SetEnable(dxrt::Configuration::ITEM::NFH_ACCELERATION, true);
+#endif
+#ifdef DXRT_CPU_OP_ACCELERATION_AVAILABLE
+        config.SetEnable(dxrt::Configuration::ITEM::CPU_OP_ACCELERATION, true);
+#endif
+#endif
+
         dxrt::InferenceEngine engine(opt.model_path, io);
         print_tensors("Inputs", engine.GetInputs());
         print_tensors("Declared outputs", engine.GetOutputs());
