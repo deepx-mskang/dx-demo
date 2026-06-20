@@ -4,4 +4,4 @@
 
 cd ~/dx-demos/yolo26
 
-./yolo26s_3/build/yolo26s_3 --video ~/Videos/dance-960-540.mp4
+./yolo26s_3/build/yolo26s_3 --video ~/Videos/dance-960-540.mp4 --exit-btn

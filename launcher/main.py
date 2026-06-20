@@ -113,17 +113,18 @@ LAUNCHER_ITEMS = [
         "loading_sec": 5,
     },
     {
-        "title": "PaddleOCR v5",
+        "title": "Optical Character Recognition",
         "title_i18n": {
-            "zh": "PaddleOCR v5",
-            "ja": "PaddleOCR v5",
-            "ko": "PaddleOCR v5",
+            "zh": "Optical Character Recognition",
+            "ja": "Optical Character Recognition",
+            "ko": "Optical Character Recognition",
         },
         "image": "assets/demo-ocr.gif",
         "video_script": "../scripts/run_ocr_web.sh",
         "camera_script": "../scripts/run_ocr.sh",
         "loading_sec": 30,
-        "video_label": "Web Based",
+        "video_label": "PaddleOCR v5",
+        "camera_label": "PaddleOCR v6",
     },
     {
         "title": "YOLOv5S Multi-channel (36)",

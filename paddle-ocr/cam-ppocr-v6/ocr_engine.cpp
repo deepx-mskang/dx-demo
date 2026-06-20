@@ -27,7 +27,7 @@ constexpr double kDetBoxThresh = 0.6;
 
 // 검출된 텍스트 윤곽선을 바깥쪽으로 얼마나 확장할지 정하는 비율입니다.
 // 텍스트 영역을 조금 넉넉하게 감싸도록 만드는 값입니다.
-constexpr double kDetUnclipRatio = 1.5;
+constexpr double kDetUnclipRatio = 1.4;
 
 // 검출 후처리에서 최대 몇 개의 후보 contour를 검사할지 제한하는 값입니다.
 // 속도와 안정성을 위한 상한입니다.
@@ -252,7 +252,7 @@ void PaddleOcrEngine::loadModels()
 {
     detModelPath_ = assetsDir_ / detModelName_;
 
-    for (int ratio : {1, 3, 5, 10, 15, 25, 35}) {
+    for (int ratio : {1, 3, 5, 10, 15, 25, 40}) {
         recModelPaths_[ratio] = resolveRecModelPath(ratio);
     }
 
@@ -553,7 +553,7 @@ int PaddleOcrEngine::routeRecognition(double aspectRatio) const
     if (aspectRatio <= 10.0) return 10;
     if (aspectRatio <= 15.0) return 15;
     if (aspectRatio <= 25.0) return 25;
-    return 35;
+    return 40;
 }
 
 double PaddleOcrEngine::boxAspectRatio(const std::vector<cv::Point2f>& box)
