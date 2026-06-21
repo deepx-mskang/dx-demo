@@ -6,6 +6,10 @@
 #include <QCloseEvent>
 #include <QColor>
 #include <QEventLoop>
+#include <QFont>
+#include <QFontDatabase>
+#include <QFontInfo>
+#include <QFontMetrics>
 #include <QImage>
 #include <QKeyEvent>
 #include <QPainter>
@@ -73,6 +77,68 @@ constexpr const char* kTitleText =
     "Super Fast and Accurate 3D Object Detection based on 3D LiDAR Point Clouds (SFA3D)";
 constexpr size_t kMaxPreparedQueue = 4;
 constexpr auto kPreparedQueuePollInterval = std::chrono::milliseconds(1);
+
+struct FontPreset {
+    const char* name;
+    const char* description;
+    std::array<const char*, 3> preferred_families;
+};
+
+const std::array<FontPreset, 3> kFontPresets = {{
+    {"sans", "clean UI sans-serif (recommended)", {"Noto Sans", "Ubuntu Sans", "DejaVu Sans"}},
+    {"serif", "editorial serif", {"Noto Serif", "Liberation Serif", "DejaVu Serif"}},
+    {"mono", "technical monospace", {"Noto Sans Mono", "Liberation Mono", "DejaVu Sans Mono"}},
+}};
+
+QString gUiFontFamily = "DejaVu Sans";
+
+std::string fontPresetNames() {
+    std::ostringstream names;
+    for (size_t i = 0; i < kFontPresets.size(); ++i) {
+        if (i > 0) {
+            names << ", ";
+        }
+        names << (i + 1) << "=" << kFontPresets[i].name
+              << " (" << kFontPresets[i].description << ")";
+    }
+    return names.str();
+}
+
+int fontPresetIndex(std::string value) {
+    if (value.size() == 1 && value[0] >= '1' &&
+        value[0] < '1' + static_cast<int>(kFontPresets.size())) {
+        return value[0] - '1';
+    }
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+    });
+    for (size_t i = 0; i < kFontPresets.size(); ++i) {
+        if (value == kFontPresets[i].name) {
+            return static_cast<int>(i);
+        }
+    }
+    return -1;
+}
+
+QString resolveFontFamily(int preset_index) {
+    const FontPreset& preset = kFontPresets.at(static_cast<size_t>(preset_index));
+    const QStringList installed = QFontDatabase().families();
+    for (const char* candidate : preset.preferred_families) {
+        const QString requested = QString::fromUtf8(candidate);
+        for (const QString& family : installed) {
+            if (family.compare(requested, Qt::CaseInsensitive) == 0) {
+                return family;
+            }
+        }
+    }
+
+    if (std::string(preset.name) == "mono") {
+        return QFontDatabase::systemFont(QFontDatabase::FixedFont).family();
+    }
+    QFont fallback(std::string(preset.name) == "serif" ? "serif" : "sans-serif");
+    fallback.setStyleHint(std::string(preset.name) == "serif" ? QFont::Serif : QFont::SansSerif);
+    return QFontInfo(fallback).family();
+}
 
 struct DetectionPalette {
     const char* name;
@@ -164,6 +230,7 @@ struct Config {
     bool full_screen = false;
     bool exit_btn = false;
     int color_palette_index = kDefaultDetectionPaletteIndex;
+    int font_preset_index = 0;
     bool loop = false;
     bool debug = false;
     double timing_cpu_scale = 1.0;
@@ -508,6 +575,7 @@ Config parseArgs(int argc, char* argv[]) {
 
     std::string pretrained_path = kDefaultDemoCheckpoint;
     std::string color = kDetectionPalettes[kDefaultDetectionPaletteIndex].name;
+    std::string font = kFontPresets[0].name;
     bool full_screen_dash = false;
 
     cxxopts::Options options("demo_dxnn_async_cpp", "SFA3D DXNN async demo implemented in C++");
@@ -541,6 +609,8 @@ Config parseArgs(int argc, char* argv[]) {
         ("color", "3D BBox palette: " + detectionPaletteNames(),
             cxxopts::value<std::string>(color)->default_value(
                 kDetectionPalettes[kDefaultDetectionPaletteIndex].name))
+        ("font", "UI font: " + fontPresetNames(),
+            cxxopts::value<std::string>(font)->default_value(kFontPresets[0].name))
         ("loop", "Loop the input sequence forever",
             cxxopts::value<bool>(config.loop)->default_value("false"))
         ("debug", "Enable debug logs and stage timing instrumentation",
@@ -559,6 +629,10 @@ Config parseArgs(int argc, char* argv[]) {
     config.color_palette_index = detectionPaletteIndex(color);
     if (config.color_palette_index < 0) {
         throw std::runtime_error("--color expects one of: " + detectionPaletteNames());
+    }
+    config.font_preset_index = fontPresetIndex(font);
+    if (config.font_preset_index < 0) {
+        throw std::runtime_error("--font expects one of: " + fontPresetNames());
     }
     if (config.timing_cpu_scale <= 0.0) {
         throw std::runtime_error("--timing-cpu-scale must be greater than 0");
@@ -1326,41 +1400,90 @@ cv::Mat bevToMat(const BevMap& bevmap) {
     return img;
 }
 
+int uiPixelSize(double scale) {
+    return std::max(9, static_cast<int>(std::round(scale * 30.0)));
+}
+
+QFont makeUiFont(int pixel_size, int thickness = 1) {
+    QFont font(gUiFontFamily);
+    font.setPixelSize(std::max(8, pixel_size));
+    font.setWeight(thickness >= 2 ? QFont::DemiBold : QFont::Medium);
+    font.setStyleStrategy(QFont::PreferAntialias);
+    font.setHintingPreference(QFont::PreferFullHinting);
+    return font;
+}
+
+struct UiTextMetrics {
+    int width = 0;
+    int height = 0;
+    int ascent = 0;
+    int descent = 0;
+};
+
+UiTextMetrics measureUiText(const std::string& text, int pixel_size, int thickness = 1) {
+    const QFontMetrics metrics(makeUiFont(pixel_size, thickness));
+    return {metrics.horizontalAdvance(QString::fromStdString(text)), metrics.height(),
+            metrics.ascent(), metrics.descent()};
+}
+
+QColor qtColor(const cv::Scalar& bgr) {
+    return QColor(static_cast<int>(bgr[2]), static_cast<int>(bgr[1]), static_cast<int>(bgr[0]));
+}
+
+void drawUiText(cv::Mat& canvas, const std::string& text, cv::Point baseline,
+                int pixel_size, const cv::Scalar& color, int thickness = 1,
+                bool shadow = false) {
+    QImage image(canvas.data, canvas.cols, canvas.rows, static_cast<int>(canvas.step),
+                 QImage::Format_BGR888);
+    QPainter painter(&image);
+    if (!painter.isActive()) {
+        throw std::runtime_error("Qt text painter could not render into the OpenCV frame");
+    }
+    painter.setRenderHint(QPainter::TextAntialiasing, true);
+    painter.setFont(makeUiFont(pixel_size, thickness));
+    const QString qtext = QString::fromStdString(text);
+    if (shadow) {
+        painter.setPen(QColor(0, 0, 0, 210));
+        painter.drawText(QPoint(baseline.x + 1, baseline.y + 1), qtext);
+    }
+    painter.setPen(qtColor(color));
+    painter.drawText(QPoint(baseline.x, baseline.y), qtext);
+}
+
 void writeCredit(cv::Mat& img, cv::Point org_author, cv::Point org_fps, double fps) {
-    const int font = cv::FONT_HERSHEY_SIMPLEX;
     const int pad_x = 14;
     const int pad_y = 8;
     const int baseline_y = org_author.y;
 
     const std::string source_text = "SFA3D DXNN Async";
-    int baseline = 0;
-    const cv::Size source_size = cv::getTextSize(source_text, font, 0.52, 1, &baseline);
+    constexpr int source_font_size = 15;
+    const UiTextMetrics source_size = measureUiText(source_text, source_font_size);
     const cv::Rect source_card(org_author.x - pad_x,
-                               baseline_y - source_size.height - pad_y,
+                               baseline_y - source_size.ascent - pad_y,
                                source_size.width + pad_x * 2,
-                               source_size.height + pad_y * 2 + baseline);
+                               source_size.height + pad_y * 2);
     cv::rectangle(img, source_card, kUiCard, cv::FILLED);
     cv::rectangle(img, source_card, kUiBorder, 1, cv::LINE_AA);
     cv::line(img, cv::Point(source_card.x, source_card.y),
              cv::Point(source_card.x + source_card.width, source_card.y),
              kUiAccent, 2, cv::LINE_AA);
-    cv::putText(img, source_text, cv::Point(org_author.x, baseline_y), font, 0.52,
-                kUiText, 1, cv::LINE_AA);
+    drawUiText(img, source_text, cv::Point(org_author.x, baseline_y), source_font_size, kUiText);
 
     std::ostringstream oss;
     oss << "Inference " << std::fixed << std::setprecision(1) << fps << " FPS";
     const std::string fps_text = oss.str();
-    const cv::Size fps_size = cv::getTextSize(fps_text, font, 0.56, 1, &baseline);
+    constexpr int fps_font_size = 16;
+    const UiTextMetrics fps_size = measureUiText(fps_text, fps_font_size);
     const cv::Rect fps_card(org_fps.x - pad_x,
-                            org_fps.y - fps_size.height - pad_y,
+                            org_fps.y - fps_size.ascent - pad_y,
                             fps_size.width + pad_x * 2,
-                            fps_size.height + pad_y * 2 + baseline);
+                            fps_size.height + pad_y * 2);
     cv::rectangle(img, fps_card, kUiCard, cv::FILLED);
     cv::rectangle(img, fps_card, kUiBorder, 1, cv::LINE_AA);
     cv::line(img, cv::Point(fps_card.x, fps_card.y),
              cv::Point(fps_card.x + fps_card.width, fps_card.y),
              kUiAccentDark, 2, cv::LINE_AA);
-    cv::putText(img, fps_text, org_fps, font, 0.56, kUiText, 1, cv::LINE_AA);
+    drawUiText(img, fps_text, org_fps, fps_font_size, kUiText);
 }
 
 void prependTitleBar(cv::Mat& img, bool reserve_exit_button_space) {
@@ -1373,24 +1496,21 @@ void prependTitleBar(cv::Mat& img, bool reserve_exit_button_space) {
     cv::line(title_bar, cv::Point(0, title_height - 2), cv::Point(img.cols, title_height - 2),
              kUiAccent, 2, cv::LINE_AA);
 
-    const int font = cv::FONT_HERSHEY_SIMPLEX;
-    int baseline = 0;
-    double font_scale = 0.72;
+    int font_size = 22;
     const int thickness = 2;
     const int reserved_right = reserve_exit_button_space ? exit_button_reserve : 0;
     const int available_width = std::max(160, img.cols - side_padding * 2 - reserved_right);
 
-    cv::Size text_size = cv::getTextSize(kTitleText, font, font_scale, thickness, &baseline);
-    while (text_size.width > available_width && font_scale > 0.38) {
-        font_scale -= 0.02;
-        text_size = cv::getTextSize(kTitleText, font, font_scale, thickness, &baseline);
+    UiTextMetrics text_size = measureUiText(kTitleText, font_size, thickness);
+    while (text_size.width > available_width && font_size > 13) {
+        --font_size;
+        text_size = measureUiText(kTitleText, font_size, thickness);
     }
 
     const int text_area_right = img.cols - reserved_right;
     const int x = std::max(side_padding, (text_area_right - text_size.width) / 2);
-    const int y = (title_height + text_size.height) / 2 - 4;
-    cv::putText(title_bar, kTitleText, cv::Point(x, y), font, font_scale,
-                kUiText, thickness, cv::LINE_AA);
+    const int y = (title_height - text_size.height) / 2 + text_size.ascent - 2;
+    drawUiText(title_bar, kTitleText, cv::Point(x, y), font_size, kUiText, thickness);
 
     cv::Mat titled;
     cv::vconcat(title_bar, img, titled);
@@ -1417,9 +1537,7 @@ float bestScore(const DetectionsByClass& detections) {
 
 void drawPanelText(cv::Mat& canvas, const std::string& text, cv::Point org, double scale,
                    const cv::Scalar& color, int thickness = 1) {
-    cv::putText(canvas, text, cv::Point(org.x + 1, org.y + 1), cv::FONT_HERSHEY_SIMPLEX,
-                scale, cv::Scalar(0, 0, 0), thickness + 1, cv::LINE_AA);
-    cv::putText(canvas, text, org, cv::FONT_HERSHEY_SIMPLEX, scale, color, thickness, cv::LINE_AA);
+    drawUiText(canvas, text, org, uiPixelSize(scale), color, thickness, true);
 }
 
 void drawHudSectionTitle(cv::Mat& canvas, const std::string& title, int x, int y, int width) {
@@ -1430,8 +1548,7 @@ void drawHudSectionTitle(cv::Mat& canvas, const std::string& title, int x, int y
 
 int drawHudMetric(cv::Mat& canvas, const std::string& label, const std::string& value, int x, int y, int width) {
     drawPanelText(canvas, label, cv::Point(x, y), 0.38, kUiTextDim, 1);
-    int baseline = 0;
-    const cv::Size value_size = cv::getTextSize(value, cv::FONT_HERSHEY_SIMPLEX, 0.5, 1, &baseline);
+    const UiTextMetrics value_size = measureUiText(value, uiPixelSize(0.5));
     drawPanelText(canvas, value, cv::Point(x + width - value_size.width, y), 0.5, kUiText, 1);
     return y + 34;
 }
@@ -1439,8 +1556,7 @@ int drawHudMetric(cv::Mat& canvas, const std::string& label, const std::string& 
 void drawHudPill(cv::Mat& canvas, const std::string& text, cv::Rect rect, const cv::Scalar& accent) {
     cv::rectangle(canvas, rect, kUiCard, cv::FILLED);
     cv::rectangle(canvas, rect, accent, 1, cv::LINE_AA);
-    int baseline = 0;
-    const cv::Size text_size = cv::getTextSize(text, cv::FONT_HERSHEY_SIMPLEX, 0.42, 1, &baseline);
+    const UiTextMetrics text_size = measureUiText(text, uiPixelSize(0.42));
     const int text_x = rect.x + std::max(6, (rect.width - text_size.width) / 2);
     const int text_y = rect.y + (rect.height + text_size.height) / 2 - 3;
     drawPanelText(canvas, text, cv::Point(text_x, text_y), 0.42, kUiText, 1);
@@ -2157,6 +2273,11 @@ int main(int argc, char* argv[]) {
         int qt_argc = 1;
         QApplication app(qt_argc, argv);
         QApplication::setApplicationName("SFA3D DXNN Demo");
+        gUiFontFamily = resolveFontFamily(config.font_preset_index);
+        QApplication::setFont(QFont(gUiFontFamily));
+        std::cout << "UI font: "
+                  << kFontPresets.at(static_cast<size_t>(config.font_preset_index)).name
+                  << " (resolved family: " << gUiFontFamily.toStdString() << ")" << std::endl;
 
         downloadAndUnzip(config);
 
