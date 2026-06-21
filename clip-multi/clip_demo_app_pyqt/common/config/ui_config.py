@@ -8,7 +8,7 @@ from pathlib import Path
 
 class UIConfig:
     # Settings View
-    num_channels = 16
+    num_channels = 9
     settings_mode = 0
     merge_central_grid = 0
     camera_mode = 0
@@ -28,8 +28,8 @@ class UIConfig:
 
     # video processing settings
     consumer_queue_size = 10
-    consumer_num_of_inference_per_sec = 4
-    consumer_max_np_array_similarity_queue = 5
+    consumer_num_of_inference_per_sec = 8
+    consumer_max_np_array_similarity_queue = 3
     producer_video_fps_sync_mode = False
     consumer_video_fps_sync_mode = False
     producer_video_frame_skip_interval = 0  # 1st to 4th frames are processed, and the 5th frame is skipped when set to 5.

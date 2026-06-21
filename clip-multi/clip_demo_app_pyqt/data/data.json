@@ -4,60 +4,60 @@
     "default_sentence_score_threshold": 0.225,
     "video_path_lists": [
         [
-            "demo_videos/theft-supermarket"
+            "theft-supermarket"
         ],
         [
-            "demo_videos/adult-fight"
+            "adult-fight"
         ],
         [
-            "demo_videos/crowded-area1"
+            "crowded-area1"
         ],
         [
-            "demo_videos/oldman-fall"
+            "oldman-fall"
         ],
         [
-            "demo_videos/oldwoman-fall"
+            "oldwoman-fall"
         ],
         [
-            "demo_videos/fire1"
+            "fire1"
         ],
         [
-            "demo_videos/workplace-fall"
+            "workplace-fall"
         ],
         [
-            "demo_videos/chick-hatching"
+            "chick-hatching"
         ],
         [
-            "demo_videos/car-accident"
+            "car-accident"
         ],
         [
-            "demo_videos/crowded-area2"
+            "crowded-area2"
         ],
         [
-            "demo_videos/children-fight"
+            "children-fight"
         ],
         [
-            "demo_videos/fire2"
+            "fire2"
         ],
         [
-            "demo_videos/theft-home"
+            "theft-home"
         ],
         [
-            "demo_videos/taekwondo-competition"
+            "taekwondo-competition"
         ],
         [
-            "demo_videos/fall-treadmill-gym"
+            "fall-treadmill-gym"
         ],
         [
-            "demo_videos/fall-hiking"
+            "fall-hiking"
         ]
     ],
     "sentence_list": [
         {
             "text": "A thumbs up gesture.",
             "min_score": 0.24,
-            "max_score": 0.3,
-            "threshold": 0.26,
+            "max_score": 0.33,
+            "threshold": 0.265,
             "disabled": false,
             "alarm_info": {
                 "enabled": false,
@@ -75,8 +75,8 @@
         {
             "text": "Showing a hand heart symbol.",
             "min_score": 0.22,
-            "max_score": 0.3,
-            "threshold": 0.24,
+            "max_score": 0.34,
+            "threshold": 0.255,
             "disabled": false,
             "alarm_info": {
                 "enabled": false,
@@ -321,9 +321,9 @@
         },
         {
             "text": "A person wearing black jacket is walking through a house.",
-            "min_score": 0.27,
-            "max_score": 0.29,
-            "threshold": 0.28,
+            "min_score": 0.25,
+            "max_score": 0.3,
+            "threshold": 0.27,
             "disabled": false,
             "alarm_info": {
                 "enabled": false,
@@ -454,9 +454,9 @@
         },
         {
             "text": "A car on fire.",
-            "min_score": 0.26,
+            "min_score": 0.195,
             "max_score": 0.28,
-            "threshold": 0.27,
+            "threshold": 0.245,
             "disabled": false,
             "alarm_info": {
                 "enabled": false,
@@ -549,9 +549,9 @@
         },
         {
             "text": "Two teenage girls are shoving and pushing each other.",
-            "min_score": 0.24,
-            "max_score": 0.28,
-            "threshold": 0.26,
+            "min_score": 0.21,
+            "max_score": 0.3,
+            "threshold": 0.225,
             "disabled": false,
             "alarm_info": {
                 "enabled": false,
@@ -645,8 +645,8 @@
         {
             "text": "A man takes an item from the shelf and puts it into his grey jacket.",
             "min_score": 0.26,
-            "max_score": 0.32,
-            "threshold": 0.285,
+            "max_score": 0.35,
+            "threshold": 0.31,
             "disabled": false,
             "alarm_info": {
                 "enabled": false,

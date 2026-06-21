@@ -1,8 +1,10 @@
 from __future__ import annotations
 import logging
+import os
 import time
 # import traceback
 
+import cv2
 import numpy as np
 import torch
 from torchvision.transforms import Compose, Resize, CenterCrop, ToTensor, Normalize
@@ -43,6 +45,8 @@ class ClipVideoConsumer(VideoConsumer):
         self.__frame_count = 0
         self.__dxnn_fps = -1.0
         self.__sol_fps = -1.0
+        self.__debug_similarity = os.environ.get("DX_CLIP_DEBUG", "0") == "1"
+        self.__last_debug_time = 0.0
 
         self.image_transform = self.__transform(224)
         self.video_mask = torch.ones(1, 1)
@@ -52,7 +56,9 @@ class ClipVideoConsumer(VideoConsumer):
         self.inference_engine_async_mode = inference_engine_async_mode
         
         if self.inference_engine_async_mode:
-            self.video_pred = np.array((1, 512), dtype=np.float32) * 0.0
+            self.video_pred = np.zeros(
+                (1, self.__dxnn_video_encoder.output_dim), dtype=np.float32
+            )
 
     @overrides()
     def _process_impl(self, channel_idx, frame, fps):
@@ -82,7 +88,8 @@ class ClipVideoConsumer(VideoConsumer):
         similarity_list = []
 
         dxnn_s = time.perf_counter_ns()
-        input_data = self.image_transform(Image.fromarray(frame).convert("RGB"))
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        input_data = self.image_transform(Image.fromarray(frame_rgb)).unsqueeze(0)
         if self.inference_engine_async_mode:
             request_id = self.__dxnn_video_encoder.run_async(input_data, self)
             self.video_pred = self.__dxnn_video_encoder.wait(request_id)
@@ -95,17 +102,19 @@ class ClipVideoConsumer(VideoConsumer):
         sentence_list = self.ctx.get_sentence_list()
         sentence_count = len(sentence_list)
 
-        for text_index in range(sentence_vector_count):
-            try:
-                similarity = self.__loose_similarity(sentence_vector_list[text_index], torch.Tensor(self.video_pred), self.video_mask)
-            except Exception as ex:
-                logging.debug(ex)
-                return
-            similarity_list.append(similarity)
+        try:
+            image_vector = self.__prepare_image_vector(self.video_pred)
+            for text_index in range(sentence_vector_count):
+                text_vector = self.__prepare_text_vector(sentence_vector_list[text_index])
+                similarity = float(torch.matmul(text_vector, image_vector))
+                similarity_list.append(similarity)
+        except Exception as ex:
+            logging.debug(ex)
+            return
 
         try:
             if len(similarity_list) > 0:
-                np_array_similarity = np.stack(similarity_list).reshape(sentence_vector_count)
+                np_array_similarity = np.asarray(similarity_list, dtype=np.float32).reshape(sentence_vector_count)
                 if np_array_similarity.shape == self.__prev_np_array_similarity.shape:
                     self.__prev_np_array_similarity = np_array_similarity
                     self.__push_np_array_similarity_queue(np_array_similarity)
@@ -132,6 +141,7 @@ class ClipVideoConsumer(VideoConsumer):
             sum_np_array_similarity += np_array_similarity
         mean_np_array_similarity = 0 if len(np_array_similarity_list) == 0 else sum_np_array_similarity / len(np_array_similarity_list)
 
+        self.__debug_similarity_scores(sentence_list, mean_np_array_similarity, channel_idx)
         self.__update_argmax_text(sentence_list, mean_np_array_similarity, channel_idx)
 
         if channel_idx == 0:
@@ -170,8 +180,33 @@ class ClipVideoConsumer(VideoConsumer):
             CenterCrop(n_px),
             lambda image: image.convert("RGB"),
             ToTensor(),
-            Normalize((0.48145466, 0.4578275, 0.40821073), (0.26862954, 0.26130258, 0.27577711)),
+            Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
         ])
+
+    def __debug_similarity_scores(self, sentence_list, mean_np_array_similarity, channel_idx):
+        if not self.__debug_similarity:
+            return
+
+        now = time.time()
+        if now - self.__last_debug_time < 1.0:
+            return
+
+        if len(mean_np_array_similarity) == 0:
+            return
+
+        top_indices = np.argsort(mean_np_array_similarity)[::-1][:3]
+        debug_rows = []
+        for idx in top_indices:
+            sentence = sentence_list[int(idx)]
+            debug_rows.append(
+                f"{mean_np_array_similarity[int(idx)]:.4f} / thr={sentence.get_score_threshold():.4f} / {sentence.get_text()}"
+            )
+        logging.warning(
+            "[DX_CLIP_DEBUG][ch=%s] top scores: %s",
+            channel_idx,
+            " | ".join(debug_rows),
+        )
+        self.__last_debug_time = now
 
     def __update_argmax_text(self, sentence_list: list[Sentence], logit_list, channel_idx):
         current_update_time_text = time.time()
@@ -225,35 +260,24 @@ class ClipVideoConsumer(VideoConsumer):
         self.__sol_fps = -1.0
 
     @staticmethod
-    def __mean_pooling_for_similarity_visual(vis_output, video_frame_mask):
-        video_mask_un = video_frame_mask.to(dtype=torch.float).unsqueeze(-1)
-        visual_output = vis_output * video_mask_un
-        video_mask_un_sum = torch.sum(video_mask_un, dim=1, dtype=torch.float)
-        video_mask_un_sum[video_mask_un_sum == 0.0] = 1.0
-        video_out = torch.sum(visual_output, dim=1) / video_mask_un_sum
-        return video_out
+    def __prepare_text_vector(text_vector):
+        if not isinstance(text_vector, torch.Tensor):
+            text_vector = torch.tensor(text_vector, dtype=torch.float32)
+        text_vector = text_vector.detach().to(dtype=torch.float32, device="cpu").reshape(-1)
+        norm = text_vector.norm()
+        if norm > 0:
+            text_vector = text_vector / norm
+        return text_vector
 
-    def __loose_similarity(self, text_vectors, video_vectors, video_frame_mask):
-        sequence_output, visual_output = (
-            text_vectors.contiguous(),
-            video_vectors.contiguous(),
-        )
-        visual_output = visual_output / visual_output.norm(dim=-1, keepdim=True)
-        visual_output = self.__mean_pooling_for_similarity_visual(
-            visual_output, video_frame_mask
-        )
-        visual_output = visual_output / visual_output.norm(dim=-1, keepdim=True)
-
-        try:
-            if sequence_output.ndim > 1:
-                sequence_output = sequence_output.squeeze(1)
-        except Exception as ex:
-            # traceback.print_exc()
-            logging.debug(ex)
-            return
-        sequence_output = sequence_output / sequence_output.norm(dim=-1, keepdim=True)
-        retrieve_logits = torch.matmul(sequence_output, visual_output.t())
-        return retrieve_logits
+    @staticmethod
+    def __prepare_image_vector(image_vector):
+        if not isinstance(image_vector, torch.Tensor):
+            image_vector = torch.tensor(image_vector, dtype=torch.float32)
+        image_vector = image_vector.detach().to(dtype=torch.float32, device="cpu").reshape(-1)
+        norm = image_vector.norm()
+        if norm > 0:
+            image_vector = image_vector / norm
+        return image_vector
 
     def __init_np_array_similarity(self):
         self.__prev_np_array_similarity = np.zeros(len(self.ctx.get_sentence_list()))

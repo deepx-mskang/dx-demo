@@ -89,8 +89,28 @@ def main():
     
     settings_window = SettingsView(args, success_cb)
     settings_window.setFont(QFont(font_families[0]))
-    settings_window.show()
     app.setFont(QFont(font_families[0]))
+
+    direct_launch_flags = {
+        "--skip_settings",
+        "--stream",
+        "--camera",
+        "--show_percent",
+        "--show_score",
+        "--fullscreen_mode",
+        "--dark_theme",
+        "--show_each_fps_label",
+        "--dynamic_font_mode",
+        "--min_font_size",
+    }
+    launch_direct = args.skip_settings or any(
+        token.split("=")[0] in direct_launch_flags for token in sys.argv[1:]
+    )
+
+    if launch_direct:
+        settings_window.apply_settings()
+    else:
+        settings_window.show()
 
     app_ret = app.exec_()
 

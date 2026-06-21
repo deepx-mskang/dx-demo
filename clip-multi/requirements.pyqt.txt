@@ -2,6 +2,7 @@ certifi
 ftfy
 numpy
 onnxruntime
+open-clip-torch
 opencv-python-headless
 overrides
 pandas
@@ -15,4 +16,3 @@ torchvision --find-links https://download.pytorch.org/whl/cpu
 torchaudio --find-links https://download.pytorch.org/whl/cpu
 tqdm
 debugpy
-

@@ -53,6 +53,13 @@ class SettingsView(QMainWindow):
 
         # UI config
         self.ui_config = UIConfig()
+        self.ui_config.show_percent = bool(args.show_percent)
+        self.ui_config.show_score = bool(args.show_score)
+        self.ui_config.fullscreen_mode = bool(args.fullscreen_mode)
+        self.ui_config.dark_theme = bool(args.dark_theme)
+        self.ui_config.show_each_fps_label = bool(args.show_each_fps_label)
+        self.ui_config.dynamic_font_mode = args.dynamic_font_mode
+        self.ui_config.min_font_size = args.min_font_size
 
         self.setWindowTitle("Settings")
         self.setMinimumWidth(1000)
@@ -142,7 +149,7 @@ class SettingsView(QMainWindow):
         self.dynamic_font_mode_dropdown.addItem("setting + word_wrap")
         self.dynamic_font_mode_dropdown.addItem("fit + large mode (show top 1)")
         self.dynamic_font_mode_dropdown.addItem("fit + min + word_wrap")
-        self.dynamic_font_mode_dropdown.setCurrentText("fit")  # 기본값 'fit'
+        self.dynamic_font_mode_dropdown.setCurrentText(self.ui_config.dynamic_font_mode)
         self.dynamic_font_mode_dropdown.currentTextChanged.connect(self.__on_layout_mode_change)
         font_setting_sub1_layout.addWidget(QLabel("Text Layout Mode:"))
         font_setting_sub1_layout.addWidget(self.dynamic_font_mode_dropdown)
@@ -174,6 +181,7 @@ class SettingsView(QMainWindow):
 
         QShortcut(QKeySequence(Qt.Key_Escape), self, activated=self.close)
         QShortcut(QKeySequence(Qt.Key_Q), self, activated=self.close)
+        self.__on_layout_mode_change(self.dynamic_font_mode_dropdown.currentText())
 
     def apply_settings(self):
         # Apply the values entered by the user

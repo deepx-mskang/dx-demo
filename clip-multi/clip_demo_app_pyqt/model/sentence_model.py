@@ -272,20 +272,13 @@ import sys
 import time
 
 import torch
-from clip.simple_tokenizer import SimpleTokenizer as ClipTokenizer
+import open_clip
 from tqdm import tqdm
 from clip_demo_app_pyqt.lib.clip.dx_text_encoder import ONNXModel
 from clip_demo_app_pyqt.common.parser.parser_util import ParserUtil
 
 class TextVectorUtil:
-    SPECIAL_TOKEN = {
-        "CLS_TOKEN": "<|startoftext|>",
-        "SEP_TOKEN": "<|endoftext|>",
-        "MASK_TOKEN": "[MASK]",
-        "UNK_TOKEN": "[UNK]",
-        "PAD_TOKEN": "[PAD]",
-    }
-    MAX_WORDS = 32
+    MODEL_NAME = "ViT-L-14-quickgelu"
     DEVICE = ""
     if torch.cuda.is_available():
         DEVICE = "cuda"
@@ -296,12 +289,10 @@ class TextVectorUtil:
 
     model_load_time_s = time.perf_counter_ns()
 
-    token_embedder = ONNXModel(
-        model_path=ParserUtil.get_args().token_embedder_onnx
-    )
     text_encoder = ONNXModel(
         model_path=ParserUtil.get_args().text_encoder_onnx
     )
+    tokenizer = open_clip.get_tokenizer(MODEL_NAME)
 
     model_load_time_e = time.perf_counter_ns()
     print("[TIME] Model Load : {} ns".format(model_load_time_e - model_load_time_s))
@@ -311,26 +302,19 @@ class TextVectorUtil:
         ret = []
         for i in tqdm(range(len(text_list))):
             text = text_list[i]
-            text_vectors = cls.get_text_vector(text)
-            ret.append(text_vectors)
+            ret.append(cls.get_text_vector(text))
         return ret
 
     @classmethod
     def get_text_vector(cls, text: str) -> torch.Tensor:
-        text = text if len(text.split(" ")) < cls.MAX_WORDS - 1 else str.join(text.split(" ")[:cls.MAX_WORDS - 2])
-        text = cls.SPECIAL_TOKEN["CLS_TOKEN"] + " " + text + " " + cls.SPECIAL_TOKEN["SEP_TOKEN"]
-        token_ids = ClipTokenizer().encode(text)
-        token_ids_mask = [1] * len(token_ids) + [0] * (
-                cls.MAX_WORDS - len(token_ids)
-        )
-        token_ids = token_ids + [0] * (
-                cls.MAX_WORDS - len(token_ids)
-        )
-        token_ids_mask = torch.tensor([token_ids_mask]).to(cls.DEVICE, dtype=torch.float32)
-        token_ids = torch.tensor([token_ids]).to(cls.DEVICE)
-        text_embedding = cls.token_embedder(token_ids)
-        text_vectors = cls.text_encoder([text_embedding, token_ids_mask])
-        return text_vectors
+        text = text.strip()
+        if not text:
+            text = " "
+        token_ids = cls.tokenizer([text])
+        if not isinstance(token_ids, torch.Tensor):
+            token_ids = torch.tensor(token_ids, dtype=torch.long)
+        token_ids = token_ids.to(cls.DEVICE, dtype=torch.long)
+        return cls.text_encoder(token_ids)
 
 
 class SentenceModel(Model):
