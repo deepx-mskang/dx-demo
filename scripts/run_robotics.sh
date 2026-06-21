@@ -2,11 +2,11 @@
 
 ./kill_robotics.sh
 
-cd ~/git/dx-demos/robotics
+cd ~/dx-demos/robotics
 
 MODELS="assets/models"
 
-BIN="./bin/robotics_demo"
+BIN="./build/robotics_demo"
 
 
 "$BIN" \
