@@ -320,6 +320,7 @@ def _resolve_shell_script(script_path: str) -> Path | None:
 
 def _run_shell_script(
     script_path: str,
+    language_code: str,
     extra_env: dict[str, str] | None = None,
 ) -> bool:
     p = _resolve_shell_script(script_path)
@@ -330,7 +331,7 @@ def _run_shell_script(
         env.update(extra_env)
     try:
         subprocess.Popen(
-            ["/bin/bash", str(p)],
+            ["/bin/bash", str(p), "--language", language_code],
             cwd=str(p.parent),
             start_new_session=True,
             env=env,
@@ -393,10 +394,12 @@ class LauncherItem(QWidget):
         title: str,
         image_path: Path,
         actions: list[tuple[str, str, int]],
+        language_getter: Callable[[], str],
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self._image_path = image_path
+        self._language_getter = language_getter
         self._source_pixmap: QPixmap | None = None
 
         if image_path.is_file():
@@ -528,7 +531,12 @@ class LauncherItem(QWidget):
                     _ready_finishers[key] = _finalize_wait
                     _ensure_ready_watcher().addPath(key)
 
-                    if not _run_shell_script(scr, {READY_FILE_ENV: key}):
+                    language_code = self._language_getter()
+                    if not _run_shell_script(
+                        scr,
+                        language_code,
+                        {READY_FILE_ENV: key},
+                    ):
                         _finalize_wait()
                         return
 
@@ -708,6 +716,7 @@ class MainWindow(QWidget):
                 title=_localized_item_title(cfg, "en"),
                 image_path=img_path,
                 actions=actions,
+                language_getter=self._current_language_code,
             )
             self._launcher_items.append((item, cfg))
             row, col = i // GRID_COLUMNS, i % GRID_COLUMNS

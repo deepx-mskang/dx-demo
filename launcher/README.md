@@ -99,8 +99,82 @@ python3 main.py
 1. 대상 스크립트가 존재하는지 확인합니다.
 2. 모든 버튼을 일시적으로 비활성화하고, 클릭한 버튼 텍스트를 `Wait`로 바꿉니다.
 3. `launcher/ready/` 아래에 고유한 ready 파일을 생성합니다.
-4. 스크립트를 `/bin/bash`로 실행하면서 `DX_LAUNCHER_READY_FILE` 환경변수에 ready 파일 경로를 전달합니다.
-5. 지정된 대기 시간이 지나거나, 실행된 앱이 ready 파일을 갱신하면 버튼 상태를 복구합니다.
+4. 클릭 시점에 선택된 언어를 `--language <code>` 인자로 전달하여 스크립트를 `/bin/bash`로 실행합니다.
+5. `DX_LAUNCHER_READY_FILE` 환경변수에 ready 파일 경로를 전달합니다.
+6. 지정된 대기 시간이 지나거나, 실행된 앱이 ready 파일을 갱신하면 버튼 상태를 복구합니다.
+
+언어 코드는 다음 중 하나입니다.
+
+- `en`: 영어
+- `ko`: 한국어
+- `zh`: 중국어
+- `ja`: 일본어
+
+예를 들어 한국어를 선택한 상태에서 버튼을 누르면 다음과 같은 형태로 실행됩니다.
+
+```bash
+/bin/bash scripts/run_demo.sh --language ko
+```
+
+### 실행 스크립트에서 언어 적용하기
+
+실행 스크립트는 `--language`를 파싱한 뒤, 동일한 애플리케이션에 전달하거나 언어별 설정을 선택할 수 있습니다.
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+LANGUAGE_CODE="en"
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --language)
+            if [[ $# -lt 2 ]]; then
+                echo "--language requires a value" >&2
+                exit 2
+            fi
+            LANGUAGE_CODE="$2"
+            shift 2
+            ;;
+        *)
+            echo "Unknown option: $1" >&2
+            exit 2
+            ;;
+    esac
+done
+
+case "$LANGUAGE_CODE" in
+    en|ko|zh|ja) ;;
+    *)
+        echo "Unsupported language: $LANGUAGE_CODE" >&2
+        exit 2
+        ;;
+esac
+
+exec python3 demo.py --language "$LANGUAGE_CODE"
+```
+
+언어별로 완전히 다른 스크립트가 필요하다면 같은 파싱 코드 뒤에서 분기할 수 있습니다.
+
+```bash
+case "$LANGUAGE_CODE" in
+    en) exec ./run_demo_en.sh ;;
+    ko) exec ./run_demo_ko.sh ;;
+    zh) exec ./run_demo_zh.sh ;;
+    ja) exec ./run_demo_ja.sh ;;
+esac
+```
+
+Python 애플리케이션에서는 다음처럼 받을 수 있습니다.
+
+```python
+import argparse
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--language", choices=["en", "ko", "zh", "ja"], default="en")
+args = parser.parse_args()
+print(f"selected language: {args.language}")
+```
 
 즉, 실행 스크립트나 하위 앱에서 준비 완료 시점을 앞당기고 싶다면 `DX_LAUNCHER_READY_FILE`을 사용하면 됩니다.
 
