@@ -62,12 +62,16 @@ constexpr int kContextLength = 77;
 constexpr int kEmbeddingSize = 768;
 constexpr int kMaxAsyncJobs = 24;
 
+struct TextDefinition {
+    QString text;
+    float threshold = 0.25F;
+};
+
 struct StreamConfig {
     QString name;
     std::string source;
     std::string pipeline;
-    std::vector<QString> texts;
-    float threshold = 0.25F;
+    std::vector<TextDefinition> texts;
 };
 
 struct AppConfig {
@@ -201,15 +205,35 @@ AppConfig loadConfig(const fs::path& path)
             stream.source = (device || uri) ? source.toStdString()
                                              : absoluteFrom(base, source).string();
         }
-        stream.threshold = static_cast<float>(object.value("threshold").toDouble(0.25));
-        if (!std::isfinite(stream.threshold)) {
-            throw std::runtime_error("stream threshold must be finite");
-        }
         const QJsonArray texts = object.value("texts").toArray();
-        for (const QJsonValue& text : texts) {
-            if (text.isString() && !text.toString().trimmed().isEmpty()) {
-                stream.texts.push_back(text.toString().trimmed());
+        for (int text_index = 0; text_index < texts.size(); ++text_index) {
+            if (!texts[text_index].isObject()) {
+                throw std::runtime_error(
+                    "streams[" + std::to_string(index) + "].texts[" +
+                    std::to_string(text_index) +
+                    "] must be an object containing 'text' and 'threshold'");
             }
+            const QJsonObject text_object = texts[text_index].toObject();
+            TextDefinition definition;
+            definition.text = text_object.value("text").toString().trimmed();
+            if (definition.text.isEmpty()) {
+                throw std::runtime_error(
+                    "streams[" + std::to_string(index) + "].texts[" +
+                    std::to_string(text_index) + "].text must be a non-empty string");
+            }
+            const QJsonValue threshold = text_object.value("threshold");
+            if (!threshold.isDouble()) {
+                throw std::runtime_error(
+                    "streams[" + std::to_string(index) + "].texts[" +
+                    std::to_string(text_index) + "].threshold must be a number");
+            }
+            definition.threshold = static_cast<float>(threshold.toDouble());
+            if (!std::isfinite(definition.threshold)) {
+                throw std::runtime_error(
+                    "streams[" + std::to_string(index) + "].texts[" +
+                    std::to_string(text_index) + "].threshold must be finite");
+            }
+            stream.texts.push_back(std::move(definition));
         }
         if (stream.texts.empty()) {
             throw std::runtime_error("each stream must contain at least one text definition");
@@ -879,7 +903,12 @@ private:
         TextEncoder text_encoder(config_.text_encoder, config_.bpe_vocab);
         stream_features_.resize(config_.streams.size());
         for (size_t index = 0; index < config_.streams.size(); ++index) {
-            stream_features_[index] = text_encoder.encode(config_.streams[index].texts);
+            std::vector<QString> text_values;
+            text_values.reserve(config_.streams[index].texts.size());
+            for (const TextDefinition& definition : config_.streams[index].texts) {
+                text_values.push_back(definition.text);
+            }
+            stream_features_[index] = text_encoder.encode(text_values);
             if (!config_.no_normalize) {
                 normalizeRows(stream_features_[index], config_.streams[index].texts.size());
             }
@@ -962,12 +991,13 @@ private:
         const std::vector<float>& text_features = stream_features_[stream_index];
         std::vector<std::pair<QString, float>> matches;
         for (size_t row = 0; row < stream.texts.size(); ++row) {
+            const TextDefinition& definition = stream.texts[row];
             const float score = std::inner_product(
                 text_features.begin() + static_cast<std::ptrdiff_t>(row * kEmbeddingSize),
                 text_features.begin() + static_cast<std::ptrdiff_t>((row + 1) * kEmbeddingSize),
                 image_embedding.begin(), 0.0F);
-            if (score >= stream.threshold) {
-                matches.emplace_back(stream.texts[row], score);
+            if (score >= definition.threshold) {
+                matches.emplace_back(definition.text, score);
             }
         }
         std::stable_sort(matches.begin(), matches.end(), [](const auto& left, const auto& right) {

@@ -53,7 +53,24 @@ cmake --build build-preview -j
 ```
 
 The header shows `9/9 Channels Active` when all channels delivered frames in
-the latest one-second interval. Press `Q` or `Esc` to close the preview.
+the latest one-second interval. Each tile reports decode FPS (`DEC`) separately
+from rendered preview FPS (`DISP`). Press `Q` or `Esc` to close the preview.
+
+Decoded frames are kept in one latest-frame slot per channel instead of being
+queued into the Qt event loop. Color conversion and preview resizing run in a
+shared worker pool, while the GUI thread only displays the latest processed
+image at a bounded refresh rate. The default worker count is half of the
+detected hardware threads, capped by the channel count.
+
+Recommended starting point for Orange Pi 5 Plus:
+
+```bash
+./run_decode_preview.sh config.9.json --full_screen --workers 4 --display-fps 15
+```
+
+Both options are portable and can be omitted on x86_64 to use automatic worker
+selection. Lowering `--display-fps` reduces GUI load without limiting decode
+FPS.
 
 The number of entries in `streams` selects the layout automatically:
 
@@ -62,16 +79,16 @@ The number of entries in `streams` selects the layout automatically:
 
 ## Config
 
-Each stream contains its own source, text definitions, and match threshold:
+Each stream contains its own source and text definitions. Every text definition
+has an independent match threshold:
 
 ```json
 {
   "name": "Front Camera",
   "source": "/dev/video0",
-  "threshold": 0.25,
   "texts": [
-    "A person is entering the building",
-    "Smoke is visible"
+    {"text": "A person is entering the building", "threshold": 0.25},
+    {"text": "Smoke is visible", "threshold": 0.31}
   ]
 }
 ```
@@ -89,7 +106,8 @@ low-latency `sync=false` pipelines.
 {
   "name": "RTSP Camera",
   "pipeline": "rtspsrc location=rtsp://example/live latency=100 ! decodebin ! videoconvert ! video/x-raw,format=BGR ! appsink drop=true max-buffers=2 sync=false",
-  "threshold": 0.27,
-  "texts": ["A person is present"]
+  "texts": [
+    {"text": "A person is present", "threshold": 0.27}
+  ]
 }
 ```
