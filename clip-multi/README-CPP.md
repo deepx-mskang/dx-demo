@@ -31,6 +31,30 @@ remaining CLI options:
 ./run_clip_multi_cpp.sh config.9.json --full_screen --exit-btn
 ```
 
+## Decode-only 9-channel preview
+
+`video_decode_preview` uses the same GStreamer pipeline construction as the
+CLIP application, but does not load DXRT, ONNX Runtime, model files, the BPE
+vocabulary, or any text prompts. Each tile reports its received FPS, decoded
+frame count, resolution, and decoder error/stall state.
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --target video_decode_preview -j
+./run_decode_preview.sh config.9.json --full_screen --exit-btn
+```
+
+To configure a build tree that does not require any inference dependencies:
+
+```bash
+cmake -S . -B build-preview -DCMAKE_BUILD_TYPE=Release -DBUILD_CLIP_MULTI_CPP=OFF
+cmake --build build-preview -j
+./build-preview/video_decode_preview --config config.9.json --full_screen --exit-btn
+```
+
+The header shows `9/9 Channels Active` when all channels delivered frames in
+the latest one-second interval. Press `Q` or `Esc` to close the preview.
+
 The number of entries in `streams` selects the layout automatically:
 
 - `config.json` — 4 streams, 2×2 grid
