@@ -4,4 +4,4 @@
 
 cd ~/dx-demos/automotive/sfa3d
 
-./build/demo_dxnn_async_cpp --full_screen --exit-btn --loop
+./build/sfa3d_async --full_screen --exit-btn --loop

@@ -862,6 +862,11 @@ protected:
         const QRect panel_rect(target_size.width(), 0,
                                std::max(0, width() - target_size.width()), height());
         drawSidePanel(painter, panel_rect);
+
+        if (!launcher_ready_notified_) {
+            notify_launcher_ready();
+            launcher_ready_notified_ = true;
+        }
     }
 
     void keyPressEvent(QKeyEvent* event) override {
@@ -970,6 +975,7 @@ private:
 
     QImage frame_;
     HudMetrics metrics_;
+    bool launcher_ready_notified_ = false;
 };
 
 class FpsCounter {
@@ -1127,8 +1133,6 @@ int main(int argc, char** argv) {
         view.resize(1280, 720);
         view.show();
     }
-
-    notify_launcher_ready();
 
     std::atomic<bool> running(true);
     std::thread worker(run_detection_loop, options, &view, &running);

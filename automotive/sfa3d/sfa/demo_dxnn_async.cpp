@@ -92,6 +92,17 @@ const std::array<FontPreset, 3> kFontPresets = {{
 
 QString gUiFontFamily = "DejaVu Sans";
 
+void notifyLauncherReady() {
+    const char* path = std::getenv("DX_LAUNCHER_READY_FILE");
+    if (path == nullptr || *path == '\0') {
+        return;
+    }
+    std::ofstream ready(path, std::ios::trunc);
+    if (ready) {
+        ready << "ready\n";
+    }
+}
+
 std::string fontPresetNames() {
     std::ostringstream names;
     for (size_t i = 0; i < kFontPresets.size(); ++i) {
@@ -1741,6 +1752,10 @@ public:
         }
         update();
         QApplication::processEvents(QEventLoop::AllEvents, 1);
+        if (!launcher_ready_notified_) {
+            notifyLauncherReady();
+            launcher_ready_notified_ = true;
+        }
     }
 
     bool isClosed() const {
@@ -1815,6 +1830,7 @@ private:
     cv::Mat frame_;
     QRect target_rect_;
     bool shown_ = false;
+    bool launcher_ready_notified_ = false;
     bool closed_ = false;
 };
 

@@ -4,4 +4,4 @@
 
 cd ~/dx-demos/automotive/yolopv2
 
-./build/demo_dxnn_qt5_async --loop --color 2 --exit-btn
+./build/yolopv2_async --loop --color 2 --exit-btn

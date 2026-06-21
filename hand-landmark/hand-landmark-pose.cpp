@@ -1692,6 +1692,11 @@ protected:
         }
 
         drawExitButton(painter);
+
+        if (!frame_.isNull() && !launcher_ready_notified_) {
+            notify_launcher_ready();
+            launcher_ready_notified_ = true;
+        }
     }
 
     void keyPressEvent(QKeyEvent* event) override {
@@ -1838,6 +1843,7 @@ private:
     QImage frame_;
     HudMetrics metrics_;
     bool show_exit_button_ = false;
+    bool launcher_ready_notified_ = false;
 };
 
 class FpsCounter {
@@ -2250,8 +2256,6 @@ int main(int argc, char** argv) {
         view.resize(1280, 720);
         view.show();
     }
-
-    notify_launcher_ready();
 
     std::atomic<bool> running(true);
     std::thread worker(run_detection_loop, options, &view, &running);

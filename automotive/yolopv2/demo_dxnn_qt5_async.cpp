@@ -47,6 +47,20 @@ constexpr int kMaxDetections = 300;
 constexpr int kMaxNmsCandidates = 30000;
 constexpr int kDefaultPaletteIndex = 0;
 
+void notify_launcher_ready()
+{
+    const char *path = std::getenv("DX_LAUNCHER_READY_FILE");
+    if (path == nullptr || *path == '\0')
+    {
+        return;
+    }
+    std::ofstream ready(path, std::ios::trunc);
+    if (ready)
+    {
+        ready << "ready\n";
+    }
+}
+
 struct RenderPalette
 {
     const char *name = "";
@@ -1733,6 +1747,7 @@ int main(int argc, char **argv)
         double inference_fps = 0.0;
         int next_frame_id = 0;
         int displayed_frames = 0;
+        bool launcher_ready_notified = false;
         bool source_ended = false;
         bool stopped = !opt.no_display && window->stopRequested();
         std::deque<AsyncJob> in_flight;
@@ -1902,6 +1917,11 @@ int main(int argc, char **argv)
                 try
                 {
                     process_qt_events(app.get(), window.get(), opt.delay);
+                    if (!launcher_ready_notified)
+                    {
+                        notify_launcher_ready();
+                        launcher_ready_notified = true;
+                    }
                     if (window->stopRequested())
                     {
                         stopped = true;

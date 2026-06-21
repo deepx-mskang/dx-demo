@@ -19,6 +19,7 @@
 #include <cstddef>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <map>
 #include <memory>
@@ -41,6 +42,18 @@ constexpr float kClipMargin = 10.0f;
 constexpr int kExitButtonWidth = 32;
 constexpr int kExitButtonHeight = 28;
 constexpr int kExitButtonMargin = 14;
+
+void notify_launcher_ready()
+{
+    const char* path = std::getenv("DX_LAUNCHER_READY_FILE");
+    if (path == nullptr || *path == '\0') {
+        return;
+    }
+    std::ofstream ready(path, std::ios::trunc);
+    if (ready) {
+        ready << "ready\n";
+    }
+}
 
 enum class Backend {
     Onnx,
@@ -671,6 +684,10 @@ protected:
         draw_selection_overlay(painter, image_rect);
         draw_hud(painter, image_rect);
         draw_exit_button(painter);
+        if (!launcher_ready_notified_) {
+            notify_launcher_ready();
+            launcher_ready_notified_ = true;
+        }
     }
 
     void mousePressEvent(QMouseEvent* event) override
@@ -983,6 +1000,7 @@ private:
     Mode mode_ = Mode::Selecting;
     int frame_interval_ms_ = 33;
     bool dragging_ = false;
+    bool launcher_ready_notified_ = false;
     cv::Point2f drag_start_{0.0f, 0.0f};
     cv::Point2f drag_current_{0.0f, 0.0f};
     cv::Rect2f selected_roi_{};

@@ -16,26 +16,26 @@ else()
     set(DXRT_LIB dxrt)
 endif()
 
-add_executable(demo_dxnn_qt5_async
+add_executable(yolopv2_async
     demo_dxnn_qt5_async.cpp
 )
 
-target_compile_definitions(demo_dxnn_qt5_async PRIVATE
+target_compile_definitions(yolopv2_async PRIVATE
     YOLOPV2_ROOT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/.."
 )
 
-target_include_directories(demo_dxnn_qt5_async PRIVATE
+target_include_directories(yolopv2_async PRIVATE
     ${OpenCV_INCLUDE_DIRS}
 )
 
-target_compile_options(demo_dxnn_qt5_async PRIVATE -Wall -Wextra -O3)
+target_compile_options(yolopv2_async PRIVATE -Wall -Wextra -O3)
 
 if(NOT MSVC)
-    target_link_options(demo_dxnn_qt5_async PRIVATE -rdynamic)
+    target_link_options(yolopv2_async PRIVATE -rdynamic)
 endif()
 
 
-target_link_libraries(demo_dxnn_qt5_async
+target_link_libraries(yolopv2_async
     ${OpenCV_LIBS}
     ${DXRT_LIB}
     Qt5::Widgets

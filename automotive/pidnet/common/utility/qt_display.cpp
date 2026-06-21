@@ -17,6 +17,8 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <cstdlib>
+#include <fstream>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -234,6 +236,7 @@ struct QtDisplayState {
     bool show_exit_button = false;
     bool window_sized = false;
     bool closed = false;
+    bool launcher_ready_notified = false;
     std::atomic<bool> exit_clicked{false};
 };
 
@@ -288,6 +291,22 @@ void requestQuit() {
     }
 }
 
+void notifyLauncherReadyOnce() {
+    auto& s = state();
+    if (s.launcher_ready_notified) {
+        return;
+    }
+    s.launcher_ready_notified = true;
+    const char* path = std::getenv("DX_LAUNCHER_READY_FILE");
+    if (path == nullptr || *path == '\0') {
+        return;
+    }
+    std::ofstream ready(path, std::ios::trunc);
+    if (ready) {
+        ready << "ready\n";
+    }
+}
+
 void ensureWindow() {
     auto& s = state();
     if (!s.app) {
@@ -337,6 +356,7 @@ void resetDisplayState() {
     s.closed = false;
     s.exit_clicked.store(false);
     s.window_sized = false;
+    s.launcher_ready_notified = false;
     s.rgb_buffer.release();
     resetDisplayFpsState();
     if (s.window) {
@@ -387,6 +407,9 @@ void showOutput(const cv::Mat& frame) {
         s.window->updateFrame(frame, s.rgb_buffer);
     }
     pumpEvents();
+    if (!frame.empty()) {
+        notifyLauncherReadyOnce();
+    }
 }
 
 }  // namespace dxapp
