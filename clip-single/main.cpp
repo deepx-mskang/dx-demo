@@ -906,13 +906,12 @@ private:
         source_info_label_->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
         source_info_label_->setMinimumHeight(48);
         source_info_label_->setStyleSheet(R"(
-            QLabel { font-size:28px;font-weight:500;color:#94a3b8;background:#1a1f2e;
+            QLabel { font-size:36px;font-weight:500;color:#94a3b8;background:#1a1f2e;
                      border:1px solid #374151;border-radius:6px;padding:8px 12px; }
         )");
         source_info_label_->setText(
-            QString("Input Source: %1  ·  Image encoder: %2")
-                .arg(QString::fromStdString(options_.input),
-                     QString::fromStdString(fs::path(options_.image_encoder).filename().string())));
+            QString("AI Model: %1")
+                .arg(QString::fromStdString(fs::path(options_.image_encoder).filename().string())));
         match_layout->addWidget(source_info_label_, 1);
         left_layout->addWidget(match_panel, 1);
         main_layout->addLayout(left_layout);

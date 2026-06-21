@@ -4,4 +4,7 @@
 
 cd ~/dx-demos/clip-multi
 
-./run_demo.sh
+./build/clip_multi_cpp \
+	--config config.9.json \
+	--full_screen \
+	--exit-btn

@@ -8,64 +8,72 @@
   "capture": {
     "width": 640,
     "height": 360,
-    "fps": 24,
+    "fps": 30,
     "skip_frames": 12
   },
   "no_normalize": false,
   "streams": [
     {
       "name": "Channel 1",
-      "source": "../clip-single/assets/CLIP-demo.mp4",
+      "source": "assets/fall-hiking.mp4",
       "threshold": 0.25,
-      "texts": ["Cars are driving on the road", "A car accident occurred"]
+      "texts": ["The hiker stumbles on the path and falls to the ground.",
+	        "A lone hiker is walking through a dense, green woodland."]
     },
     {
       "name": "Channel 2",
-      "source": "../clip-single/assets/CLIP-demo.mp4",
+      "source": "assets/fall-treadmill-gym.mp4",
       "threshold": 0.25,
-      "texts": ["A car is on fire", "Black smoke is rising"]
+      "texts": ["The man collapses and falls off the treadmill.",
+	        "The man is running on the threadmill."]
     },
     {
       "name": "Channel 3",
-      "source": "../clip-single/assets/CLIP-demo.mp4",
+      "source": "assets/car-accident.mp4",
       "threshold": 0.25,
-      "texts": ["A massive explosion occurred", "A concrete structure collapsed"]
+      "texts": ["A black van crashes into the side of other car.",
+	        "Vehicles are passing by on the street."]
     },
     {
       "name": "Channel 4",
-      "source": "../clip-single/assets/CLIP-demo.mp4",
+      "source": "assets/taekwondo-competition.mp4",
       "threshold": 0.25,
-      "texts": ["A crowded outdoor area", "People are walking near cars"]
+      "texts": ["Two black belt martial artists are practicing combat techniques.",
+	        "A man and a woman with black belts kneel before a sparring session."]
     },
     {
       "name": "Channel 5",
-      "source": "../clip-single/assets/CLIP-demo.mp4",
+      "source": "assets/oldwoman-fall.mp4",
       "threshold": 0.25,
       "texts": ["A person is lying on the floor", "A person has fallen down"]
     },
     {
       "name": "Channel 6",
-      "source": "../clip-single/assets/CLIP-demo.mp4",
+      "source": "assets/workplace-fall.mp4",
       "threshold": 0.25,
-      "texts": ["Emergency vehicles are present", "A dangerous event is happening"]
+      "texts": ["A worker rushes to provide first aid to his injured colleague.",
+	        "A factory worker is carrying a cardboard box."]
     },
     {
       "name": "Channel 7",
-      "source": "../clip-single/assets/CLIP-demo.mp4",
+      "source": "assets/fire2.mp4",
       "threshold": 0.25,
-      "texts": ["A normal traffic scene", "Vehicles are moving normally"]
+      "texts": ["A kitchen stove is on fire, with large flames and black smoke.",
+	        "A car is fully engulfed in flames in an empty parking lot."]
     },
     {
       "name": "Channel 8",
-      "source": "../clip-single/assets/CLIP-demo.mp4",
+      "source": "assets/oldwoman-fall.mp4",
       "threshold": 0.25,
-      "texts": ["Fire and smoke are visible", "Bright flames are visible"]
+      "texts": ["An elderly woman is using a walker in the room.",
+	        "A person fell down on the floor."]
     },
     {
       "name": "Channel 9",
-      "source": "../clip-single/assets/CLIP-demo.mp4",
+      "source": "assets/theft-supermarket.mp4",
       "threshold": 0.25,
-      "texts": ["An unusual situation is occurring", "The scene appears safe"]
+      "texts": ["A man takes an item from the shelf and puts it into his grey jacket.",
+	        "A person is shopping in a supermarket."]
     }
   ]
 }

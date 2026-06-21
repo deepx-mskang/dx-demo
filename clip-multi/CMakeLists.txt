@@ -8,6 +8,12 @@ set(CMAKE_AUTOMOC ON)
 find_package(OpenCV REQUIRED)
 find_package(Qt5 REQUIRED COMPONENTS Widgets)
 find_package(ZLIB REQUIRED)
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(GSTREAMER REQUIRED IMPORTED_TARGET
+    gstreamer-1.0
+    gstreamer-app-1.0
+    gstreamer-video-1.0
+)
 
 if(CROSS_COMPILE OR MSVC)
     find_library(DXRT_LIB dxrt HINTS ${DXRT_INSTALLED_DIR}/lib REQUIRED)
@@ -38,6 +44,7 @@ target_include_directories(clip_multi_cpp PRIVATE
     ${OpenCV_INCLUDE_DIRS}
     ${ONNXRUNTIME_INCLUDE_DIR}
     ${DXRT_INCLUDE_DIR}
+    ${GSTREAMER_INCLUDE_DIRS}
 )
 
 target_compile_options(clip_multi_cpp PRIVATE -Wall -Wextra -O3)
@@ -48,6 +55,7 @@ target_link_libraries(clip_multi_cpp PRIVATE
     ZLIB::ZLIB
     ${DXRT_LIB}
     ${ONNXRUNTIME_LIB}
+    PkgConfig::GSTREAMER
     pthread
     dl
 )

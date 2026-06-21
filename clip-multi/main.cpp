@@ -1,6 +1,7 @@
 #include "clip_tokenizer.hpp"
 
 #include <dxrt/dxrt_api.h>
+#include <gst/gst.h>
 #include <onnxruntime_cxx_api.h>
 #include <opencv2/opencv.hpp>
 
@@ -39,6 +40,7 @@
 #include <cstring>
 #include <deque>
 #include <filesystem>
+#include <functional>
 #include <iostream>
 #include <memory>
 #include <mutex>
@@ -85,6 +87,7 @@ struct CliOptions {
     std::string config_path = "config.json";
     bool full_screen = false;
     bool exit_button = false;
+    bool gst_probe = true;
 };
 
 void printUsage(const char* argv0)
@@ -94,6 +97,7 @@ void printUsage(const char* argv0)
         << "  --config PATH      Multi-stream JSON configuration (default: config.json)\n"
         << "  --full_screen      Show the grid in fullscreen mode\n"
         << "  --exit-btn         Show an Exit button in the top header\n"
+        << "  --no-gst-probe     Skip startup GStreamer decoder probe logs\n"
         << "  -h, --help         Show this help\n";
 }
 
@@ -114,6 +118,8 @@ CliOptions parseArgs(int argc, char** argv)
             options.full_screen = true;
         } else if (arg == "--exit-btn") {
             options.exit_button = true;
+        } else if (arg == "--no-gst-probe") {
+            options.gst_probe = false;
         } else {
             throw std::runtime_error("unknown argument: " + arg);
         }
@@ -255,12 +261,112 @@ std::string makeGstreamerPipeline(const StreamConfig& stream, const AppConfig& c
         return "uridecodebin uri=" + gstQuote(stream.source) + live_sink;
     }
     return "filesrc location=" + gstQuote(stream.source) +
-           " ! decodebin ! videoconvert ! videoscale ! videorate"
+           " ! decodebin ! videoconvert ! videoscale"
            " ! video/x-raw,format=BGR,width=" + std::to_string(config.width) +
            ",height=" + std::to_string(config.height) +
-           ",framerate=" + std::to_string(config.fps) +
-           "/1,pixel-aspect-ratio=1/1"
-           " ! appsink drop=true max-buffers=2 sync=true";
+           ",pixel-aspect-ratio=1/1"
+           " ! appsink drop=true max-buffers=2 sync=false";
+}
+
+void initGstreamer()
+{
+    static std::once_flag once;
+    std::call_once(once, []() {
+        int argc = 0;
+        char** argv = nullptr;
+        gst_init(&argc, &argv);
+        std::cout << "[GStreamer] version " << gst_version_string() << std::endl;
+    });
+}
+
+bool containsCaseInsensitive(const std::string& text, const std::string& needle)
+{
+    return std::search(text.begin(), text.end(), needle.begin(), needle.end(),
+                       [](unsigned char left, unsigned char right) {
+                           return std::tolower(left) == std::tolower(right);
+                       }) != text.end();
+}
+
+bool looksLikeHardwareCodecFactory(const std::string& factory_name, const std::string& klass)
+{
+    static const std::array<const char*, 11> keywords = {
+        "vaapi", "nvdec", "nvv4l2", "v4l2", "mfx", "qsv", "d3d11", "amf", "videotoolbox", "cuda", "mpp"};
+    return std::any_of(keywords.begin(), keywords.end(), [&](const char* keyword) {
+        return containsCaseInsensitive(factory_name, keyword) ||
+               containsCaseInsensitive(klass, keyword);
+    });
+}
+
+void logGstreamerDecoderProbe(int stream_index, const QString& stream_name, const std::string& pipeline)
+{
+    initGstreamer();
+    GError* error = nullptr;
+    GstElement* root = gst_parse_launch(pipeline.c_str(), &error);
+    if (!root) {
+        std::cout << "[Stream " << (stream_index + 1) << "] gst probe parse failed: "
+                  << (error && error->message ? error->message : "unknown error") << std::endl;
+        if (error) {
+            g_error_free(error);
+        }
+        return;
+    }
+    if (error) {
+        std::cout << "[Stream " << (stream_index + 1) << "] gst probe parse warning: "
+                  << error->message << std::endl;
+        g_error_free(error);
+    }
+
+    gst_element_set_state(root, GST_STATE_PAUSED);
+    GstState current = GST_STATE_NULL;
+    GstState pending = GST_STATE_NULL;
+    const GstStateChangeReturn state_result =
+        gst_element_get_state(root, &current, &pending, 3 * GST_SECOND);
+    if (state_result == GST_STATE_CHANGE_FAILURE) {
+        std::cout << "[Stream " << (stream_index + 1) << "] gst probe could not pause pipeline"
+                  << std::endl;
+    }
+
+    bool decoder_found = false;
+    bool hardware_decoder_found = false;
+    GstIterator* iterator = gst_bin_iterate_recurse(GST_BIN(root));
+    GValue item = G_VALUE_INIT;
+    while (gst_iterator_next(iterator, &item) == GST_ITERATOR_OK) {
+        GstElement* element = GST_ELEMENT(g_value_get_object(&item));
+        GstElementFactory* factory = gst_element_get_factory(element);
+        if (factory != nullptr) {
+            const gchar* factory_name = gst_plugin_feature_get_name(GST_PLUGIN_FEATURE(factory));
+            const gchar* klass = gst_element_factory_get_metadata(factory, GST_ELEMENT_METADATA_KLASS);
+            const std::string klass_text = klass ? klass : "";
+            if (containsCaseInsensitive(klass_text, "Decoder")) {
+                decoder_found = true;
+                const std::string factory_text = factory_name ? factory_name : "";
+                const bool is_hardware = looksLikeHardwareCodecFactory(factory_text, klass_text);
+                hardware_decoder_found = hardware_decoder_found || is_hardware;
+                std::cout << "[Stream " << (stream_index + 1) << "] decoder probe: name=\""
+                          << stream_name.toStdString() << "\" element=\""
+                          << GST_ELEMENT_NAME(element) << "\" factory=\"" << factory_text
+                          << "\" klass=\"" << klass_text << "\" hw="
+                          << (is_hardware ? "yes" : "no") << std::endl;
+            }
+        }
+        g_value_reset(&item);
+    }
+    g_value_unset(&item);
+    gst_iterator_free(iterator);
+
+    if (!decoder_found) {
+        std::cout << "[Stream " << (stream_index + 1)
+                  << "] decoder probe: no decoder element discovered after startup probe"
+                  << std::endl;
+    } else {
+        std::cout << "[Stream " << (stream_index + 1) << "] decoder probe summary: "
+                  << (hardware_decoder_found ? "hardware-looking decoder detected"
+                                             : "only software-looking decoders detected")
+                  << std::endl;
+    }
+
+    gst_element_set_state(root, GST_STATE_NULL);
+    gst_object_unref(root);
 }
 
 QImage matToImage(const cv::Mat& bgr)
@@ -321,9 +427,11 @@ class StreamThread : public QThread {
     Q_OBJECT
 
 public:
-    StreamThread(int stream_index, QString name, std::string pipeline, int fps, QObject* parent = nullptr)
+    StreamThread(
+        int stream_index, QString name, std::string pipeline, int fps, bool gst_probe,
+        QObject* parent = nullptr)
         : QThread(parent), stream_index_(stream_index), name_(std::move(name)),
-          pipeline_(std::move(pipeline)), fps_(fps)
+          pipeline_(std::move(pipeline)), fps_(fps), gst_probe_(gst_probe)
     {
     }
 
@@ -347,6 +455,10 @@ protected:
         const double frame_period = 1.0 / std::max(1, fps_);
         bool reported_open_error = false;
         while (!stop_requested_.load()) {
+            if (!probe_logged_ && gst_probe_) {
+                probe_logged_ = true;
+                logGstreamerDecoderProbe(stream_index_, name_, pipeline_);
+            }
             cv::VideoCapture capture(pipeline_, cv::CAP_GSTREAMER);
             if (!capture.isOpened()) {
                 if (!reported_open_error) {
@@ -356,6 +468,9 @@ protected:
                 QThread::msleep(1000);
                 continue;
             }
+            std::cout << "[Stream " << (stream_index_ + 1) << "] capture backend="
+                      << capture.getBackendName() << " name=\"" << name_.toStdString() << "\""
+                      << std::endl;
             reported_open_error = false;
             while (!stop_requested_.load()) {
                 const auto started = std::chrono::steady_clock::now();
@@ -382,6 +497,8 @@ private:
     QString name_;
     std::string pipeline_;
     int fps_ = 30;
+    bool gst_probe_ = true;
+    bool probe_logged_ = false;
     std::atomic_bool stop_requested_{false};
 };
 
@@ -667,8 +784,8 @@ class MainWindow : public QMainWindow {
     Q_OBJECT
 
 public:
-    MainWindow(AppConfig config, bool exit_button, QWidget* parent = nullptr)
-        : QMainWindow(parent), config_(std::move(config))
+    MainWindow(AppConfig config, bool exit_button, bool gst_probe, QWidget* parent = nullptr)
+        : QMainWindow(parent), config_(std::move(config)), gst_probe_(gst_probe)
     {
         setWindowTitle("DEEPX CLIP Multi-Stream");
         resize(1920, 1080);
@@ -776,7 +893,7 @@ private:
             const std::string pipeline = makeGstreamerPipeline(config_.streams[index], config_);
             std::cout << "[Stream " << (index + 1) << "] " << pipeline << std::endl;
             auto* thread = new StreamThread(static_cast<int>(index), config_.streams[index].name,
-                                            pipeline, config_.fps, this);
+                                            pipeline, config_.fps, gst_probe_, this);
             connect(thread, &StreamThread::frameReady,
                     this, &MainWindow::onFrame, Qt::QueuedConnection);
             connect(thread, &StreamThread::streamError,
@@ -864,6 +981,7 @@ private:
 
     AppConfig config_;
     bool closing_ = false;
+    bool gst_probe_ = true;
     QTimer* result_timer_ = nullptr;
     std::vector<StreamTile*> tiles_;
     std::vector<StreamThread*> stream_threads_;
@@ -908,7 +1026,7 @@ int main(int argc, char** argv)
         AppConfig config = loadConfig(config_path);
         qRegisterMetaType<cv::Mat>("cv::Mat");
         QApplication app(argc, argv);
-        MainWindow window(std::move(config), cli.exit_button);
+        MainWindow window(std::move(config), cli.exit_button, cli.gst_probe);
         if (cli.full_screen) {
             window.showFullScreen();
         } else {
