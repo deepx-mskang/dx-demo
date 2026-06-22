@@ -63,7 +63,7 @@ namespace fs = std::filesystem;
 
 namespace {
 
-constexpr int kMaxInferenceQueue = 6;
+constexpr int kMaxInferenceQueue = 8;
 constexpr int kBevWidth = 608;
 constexpr int kBevHeight = 608;
 constexpr int kHmWidth = 152;
@@ -87,8 +87,8 @@ constexpr const char* kWindowName = "SFA3D - Front vs Back (DXNN Async C++)";
 constexpr const char* kDefaultDemoCheckpoint = "../checkpoints/fpn_resnet_18/fpn_resnet_18_epoch_300.pth";
 constexpr const char* kTitleText =
     "Super Fast and Accurate 3D Object Detection based on 3D LiDAR Point Clouds (SFA3D)";
-constexpr size_t kMaxPreparedQueue = 4;
-constexpr size_t kMaxRenderQueue = 4;
+constexpr size_t kMaxPreparedQueue = 8;
+constexpr size_t kMaxRenderQueue = 6;
 constexpr auto kPreparedQueuePollInterval = std::chrono::milliseconds(1);
 constexpr auto kInferenceFpsWindow = std::chrono::seconds(5);
 constexpr auto kInferenceFpsUpdateInterval = std::chrono::milliseconds(200);
