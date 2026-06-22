@@ -88,6 +88,7 @@ constexpr const char* kDefaultDemoCheckpoint = "../checkpoints/fpn_resnet_18/fpn
 constexpr const char* kTitleText =
     "Super Fast and Accurate 3D Object Detection based on 3D LiDAR Point Clouds (SFA3D)";
 constexpr size_t kMaxPreparedQueue = 4;
+constexpr size_t kMaxRenderQueue = 4;
 constexpr auto kPreparedQueuePollInterval = std::chrono::milliseconds(1);
 constexpr auto kInferenceFpsWindow = std::chrono::seconds(5);
 constexpr auto kInferenceFpsUpdateInterval = std::chrono::milliseconds(200);
@@ -2353,65 +2354,140 @@ void validateCacheHeader(std::istream& input, const Config& config, const DemoKi
     }
 }
 
-std::optional<std::vector<PreparedSample>> loadPersistentBevCache(
-    const Config& config, const DemoKittiDataset& dataset, const InputSpec& input_spec) {
-    const fs::path cache_path = dataset.bevCachePath();
-    if (!fs::is_regular_file(cache_path)) {
-        return std::nullopt;
+void skipCacheMat(std::istream& input, int expected_rows = 0, int expected_cols = 0) {
+    const int32_t rows = readCacheValue<int32_t>(input);
+    const int32_t cols = readCacheValue<int32_t>(input);
+    const int32_t type = readCacheValue<int32_t>(input);
+    const uint64_t size = readCacheValue<uint64_t>(input);
+    if (rows <= 0 || cols <= 0 || rows > 10000 || cols > 10000 || type != CV_8UC3) {
+        throw std::runtime_error("Invalid image metadata in BEV cache");
     }
-
-    const auto start = Clock::now();
-    std::cout << "Loading persistent BEV cache: " << cache_path << std::endl;
-    try {
-        std::ifstream input(cache_path, std::ios::binary);
-        if (!input) {
-            throw std::runtime_error("Failed to open cache file");
-        }
-        validateCacheHeader(input, config, dataset, input_spec);
-
-        size_t cached_bytes = 0;
-        std::vector<PreparedSample> cached_samples;
-        cached_samples.reserve(dataset.size());
-        for (size_t sample_idx = 0; sample_idx < dataset.size(); ++sample_idx) {
-            PreparedSample prepared;
-            prepared.sample.sequence_idx = static_cast<int64_t>(sample_idx);
-            prepared.sample.dataset_idx = readCacheValue<int32_t>(input);
-            if (prepared.sample.dataset_idx != dataset.sampleId(sample_idx)) {
-                throw std::runtime_error("Cached KITTI sample order changed");
-            }
-            prepared.sample.img_rgb = readCacheMat(input);
-            prepared.sample.front_bev_image = readCacheMat(input, kBevHeight, kBevWidth);
-            prepared.sample.back_bev_image = readCacheMat(input, kBevHeight, kBevWidth);
-            prepared.front_input = readCacheBuffer(input, input_spec.byte_size);
-            prepared.back_input = readCacheBuffer(input, input_spec.byte_size);
-            cached_bytes += cachedSampleBytes(prepared);
-            cached_samples.push_back(std::move(prepared));
-        }
-
-        const double gib = static_cast<double>(cached_bytes) / (1024.0 * 1024.0 * 1024.0);
-        std::cout << std::fixed << std::setprecision(2)
-                  << "Persistent BEV cache loaded: " << elapsedMs(start) / 1000.0
-                  << "s, memory=" << gib << " GiB" << std::endl;
-        return cached_samples;
-    } catch (const std::exception& exc) {
-        std::cerr << "Ignoring persistent BEV cache (" << exc.what()
-                  << "). It will be rebuilt." << std::endl;
-        return std::nullopt;
+    if ((expected_rows > 0 && rows != expected_rows) ||
+        (expected_cols > 0 && cols != expected_cols)) {
+        throw std::runtime_error("Cached BEV image dimensions do not match this build");
+    }
+    const uint64_t expected_size =
+        static_cast<uint64_t>(rows) * static_cast<uint64_t>(cols) * 3U;
+    if (size != expected_size || size > static_cast<uint64_t>(std::numeric_limits<std::streamoff>::max())) {
+        throw std::runtime_error("Cached image byte size is invalid");
+    }
+    input.seekg(static_cast<std::streamoff>(size), std::ios::cur);
+    if (!input) {
+        throw std::runtime_error("Unexpected end of cached image");
     }
 }
 
-void savePersistentBevCache(const Config& config, const DemoKittiDataset& dataset,
-                            const InputSpec& input_spec,
-                            const std::vector<PreparedSample>& cached_samples) {
-    if (cached_samples.size() != dataset.size()) {
-        throw std::runtime_error("Cannot save an incomplete BEV cache");
+void skipCacheBuffer(std::istream& input, size_t expected_size) {
+    const uint64_t size = readCacheValue<uint64_t>(input);
+    if (size != expected_size || size > static_cast<uint64_t>(std::numeric_limits<std::streamoff>::max())) {
+        throw std::runtime_error("Cached DXNN input size does not match the model");
+    }
+    input.seekg(static_cast<std::streamoff>(size), std::ios::cur);
+    if (!input) {
+        throw std::runtime_error("Unexpected end of cached DXNN input");
+    }
+}
+
+class PersistentBevCache {
+public:
+    PersistentBevCache(const fs::path& cache_path, const Config& config,
+                       const DemoKittiDataset& dataset, const InputSpec& input_spec)
+        : input_byte_size_(input_spec.byte_size),
+          input_(cache_path, std::ios::binary) {
+        if (!input_) {
+            throw std::runtime_error("Failed to open cache file");
+        }
+        validateCacheHeader(input_, config, dataset, input_spec);
+
+        sample_offsets_.reserve(dataset.size());
+        for (size_t sample_idx = 0; sample_idx < dataset.size(); ++sample_idx) {
+            const std::streampos sample_offset = input_.tellg();
+            if (sample_offset == std::streampos(-1)) {
+                throw std::runtime_error("Failed to index BEV cache");
+            }
+            sample_offsets_.push_back(sample_offset);
+
+            const int32_t dataset_idx = readCacheValue<int32_t>(input_);
+            if (dataset_idx != dataset.sampleId(sample_idx)) {
+                throw std::runtime_error("Cached KITTI sample order changed");
+            }
+            skipCacheMat(input_);
+            skipCacheMat(input_, kBevHeight, kBevWidth);
+            skipCacheMat(input_, kBevHeight, kBevWidth);
+            skipCacheBuffer(input_, input_byte_size_);
+            skipCacheBuffer(input_, input_byte_size_);
+        }
     }
 
+    PreparedSample loadSample(size_t sample_idx, int64_t sequence_idx) {
+        if (sample_idx >= sample_offsets_.size()) {
+            throw std::runtime_error("Cached sample index is out of range");
+        }
+        input_.clear();
+        input_.seekg(sample_offsets_[sample_idx]);
+        if (!input_) {
+            throw std::runtime_error("Failed to seek within BEV cache");
+        }
+
+        PreparedSample prepared;
+        prepared.sample.sequence_idx = sequence_idx;
+        prepared.sample.dataset_idx = readCacheValue<int32_t>(input_);
+        prepared.sample.img_rgb = readCacheMat(input_);
+        prepared.sample.front_bev_image = readCacheMat(input_, kBevHeight, kBevWidth);
+        prepared.sample.back_bev_image = readCacheMat(input_, kBevHeight, kBevWidth);
+        prepared.front_input = readCacheBuffer(input_, input_byte_size_);
+        prepared.back_input = readCacheBuffer(input_, input_byte_size_);
+        return prepared;
+    }
+
+    size_t size() const {
+        return sample_offsets_.size();
+    }
+
+private:
+    size_t input_byte_size_ = 0;
+    std::ifstream input_;
+    std::vector<std::streampos> sample_offsets_;
+};
+
+std::unique_ptr<PersistentBevCache> openPersistentBevCache(
+    const Config& config, const DemoKittiDataset& dataset, const InputSpec& input_spec) {
+    const fs::path cache_path = dataset.bevCachePath();
+    if (!fs::is_regular_file(cache_path)) {
+        return nullptr;
+    }
+
+    const auto start = Clock::now();
+    std::cout << "Indexing persistent BEV cache: " << cache_path << std::endl;
+    try {
+        auto cache = std::make_unique<PersistentBevCache>(
+            cache_path, config, dataset, input_spec);
+        const double index_kib = static_cast<double>(cache->size() * sizeof(std::streampos)) / 1024.0;
+        std::cout << std::fixed << std::setprecision(2)
+                  << "Persistent BEV cache ready: " << elapsedMs(start) / 1000.0
+                  << "s, memory index=" << index_kib << " KiB (sample data stays on disk)"
+                  << std::endl;
+        return cache;
+    } catch (const std::exception& exc) {
+        std::cerr << "Ignoring persistent BEV cache (" << exc.what()
+                  << "). It will be rebuilt." << std::endl;
+        return nullptr;
+    }
+}
+
+bool buildPersistentBevCache(const Config& config, const DemoKittiDataset& dataset,
+                             const InputSpec& input_spec,
+                             std::atomic<bool>& stop_requested) {
     const fs::path cache_path = dataset.bevCachePath();
     fs::path temporary_path = cache_path;
     temporary_path += ".tmp";
     std::error_code ec;
     fs::remove(temporary_path, ec);
+
+    std::cout << "Precomputing " << dataset.size()
+              << " BEV samples directly to disk..." << std::endl;
+    const auto start = Clock::now();
+    uint64_t cached_bytes = 0;
 
     try {
         std::ofstream output(temporary_path, std::ios::binary | std::ios::trunc);
@@ -2419,67 +2495,52 @@ void savePersistentBevCache(const Config& config, const DemoKittiDataset& datase
             throw std::runtime_error("Failed to create " + temporary_path.string());
         }
         writeCacheHeader(output, config, dataset, input_spec);
-        for (const auto& prepared : cached_samples) {
+
+        for (size_t sample_idx = 0; sample_idx < dataset.size(); ++sample_idx) {
+            if (stop_requested.load()) {
+                output.close();
+                fs::remove(temporary_path, ec);
+                return false;
+            }
+
+            PreparedSample prepared = prepareDatasetSample(
+                config, dataset, input_spec, sample_idx, static_cast<int64_t>(sample_idx));
+            cached_bytes += cachedSampleBytes(prepared);
             writeCacheValue(output, static_cast<int32_t>(prepared.sample.dataset_idx));
             writeCacheMat(output, prepared.sample.img_rgb);
             writeCacheMat(output, prepared.sample.front_bev_image);
             writeCacheMat(output, prepared.sample.back_bev_image);
             writeCacheBuffer(output, prepared.front_input);
             writeCacheBuffer(output, prepared.back_input);
+
+            const size_t completed = sample_idx + 1;
+            if (completed == dataset.size() || completed % 25 == 0) {
+                std::cout << "  BEV cache: " << completed << "/" << dataset.size() << std::endl;
+            }
         }
+
         output.close();
         if (!output) {
             throw std::runtime_error("Failed to finalize persistent BEV cache");
         }
 
-        ec.clear();
         fs::remove(cache_path, ec);
         ec.clear();
         fs::rename(temporary_path, cache_path, ec);
         if (ec) {
             throw std::runtime_error("Failed to install persistent BEV cache: " + ec.message());
         }
-        std::cout << "Persistent BEV cache saved: " << cache_path << std::endl;
+
+        const double gib = static_cast<double>(cached_bytes) / (1024.0 * 1024.0 * 1024.0);
+        std::cout << std::fixed << std::setprecision(2)
+                  << "Persistent BEV cache saved: " << cache_path
+                  << ", elapsed=" << elapsedMs(start) / 1000.0 << "s, disk=" << gib << " GiB"
+                  << std::endl;
+        return true;
     } catch (...) {
         fs::remove(temporary_path, ec);
         throw;
     }
-}
-
-std::vector<PreparedSample> precomputeDataset(const Config& config, const DemoKittiDataset& dataset,
-                                              const InputSpec& input_spec,
-                                              std::atomic<bool>& stop_requested) {
-    std::cout << "Precomputing " << dataset.size()
-              << " BEV samples before inference..." << std::endl;
-    const auto start = Clock::now();
-    size_t cached_bytes = 0;
-    std::vector<PreparedSample> cached_samples;
-    cached_samples.reserve(dataset.size());
-
-    for (size_t sample_idx = 0; sample_idx < dataset.size(); ++sample_idx) {
-        if (stop_requested.load()) {
-            break;
-        }
-        PreparedSample prepared = prepareDatasetSample(config, dataset, input_spec, sample_idx,
-                                                       static_cast<int64_t>(sample_idx));
-        cached_bytes += cachedSampleBytes(prepared);
-        cached_samples.push_back(std::move(prepared));
-
-        const size_t completed = sample_idx + 1;
-        if (completed == dataset.size() || completed % 25 == 0) {
-            std::cout << "  BEV cache: " << completed << "/" << dataset.size() << std::endl;
-        }
-    }
-
-    if (!stop_requested.load() && cached_samples.size() != dataset.size()) {
-        throw std::runtime_error("BEV precomputation did not complete");
-    }
-
-    const double gib = static_cast<double>(cached_bytes) / (1024.0 * 1024.0 * 1024.0);
-    std::cout << std::fixed << std::setprecision(2)
-              << "BEV precompute complete: " << elapsedMs(start) / 1000.0 << "s, cache="
-              << gib << " GiB" << std::endl;
-    return cached_samples;
 }
 
 class PreprocessWorker {
@@ -2487,14 +2548,14 @@ public:
     PreprocessWorker(const Config& config, const DemoKittiDataset& dataset, InputSpec input_spec,
                      BlockingQueue<PreparedItem>& prepared_queue, std::atomic<bool>& stop_requested,
                      std::atomic<bool>& use_precomputed_bev,
-                     const std::vector<PreparedSample>* cached_samples = nullptr)
+                     PersistentBevCache* persistent_cache = nullptr)
         : config_(config),
           dataset_(dataset),
           input_spec_(std::move(input_spec)),
           prepared_queue_(prepared_queue),
           stop_requested_(stop_requested),
           use_precomputed_bev_(use_precomputed_bev),
-          cached_samples_(cached_samples) {}
+          persistent_cache_(persistent_cache) {}
 
     void operator()() {
         run();
@@ -2522,16 +2583,10 @@ private:
         prepared_queue_.push(PreparedItem::stopItem());
     }
 
-    PreparedSample sampleForSequence(size_t sample_idx, int64_t sequence_idx) const {
-        if (cached_samples_ != nullptr &&
+    PreparedSample sampleForSequence(size_t sample_idx, int64_t sequence_idx) {
+        if (persistent_cache_ != nullptr &&
             use_precomputed_bev_.load(std::memory_order_acquire)) {
-            PreparedSample prepared = cached_samples_->at(sample_idx);
-            prepared.sample.sequence_idx = sequence_idx;
-            prepared.sample.inference_fps = 0.0;
-            prepared.sample.front_detections.reset();
-            prepared.sample.back_detections.reset();
-            prepared.sample.timings = {};
-            return prepared;
+            return persistent_cache_->loadSample(sample_idx, sequence_idx);
         }
         return prepareDatasetSample(config_, dataset_, input_spec_, sample_idx, sequence_idx);
     }
@@ -2542,7 +2597,7 @@ private:
     BlockingQueue<PreparedItem>& prepared_queue_;
     std::atomic<bool>& stop_requested_;
     std::atomic<bool>& use_precomputed_bev_;
-    const std::vector<PreparedSample>* cached_samples_ = nullptr;
+    PersistentBevCache* persistent_cache_ = nullptr;
 };
 
 class AsyncInferenceWorker {
@@ -2585,21 +2640,15 @@ private:
             }
             const InputSpec input_spec = getInputSpec(engine);
 
-            std::vector<PreparedSample> cached_samples;
+            std::unique_ptr<PersistentBevCache> persistent_cache;
             if (config_.precompute_bev) {
-                auto persistent_cache = loadPersistentBevCache(config_, dataset_, input_spec);
-                if (persistent_cache.has_value()) {
-                    cached_samples = std::move(*persistent_cache);
-                } else {
-                    cached_samples = precomputeDataset(config_, dataset_, input_spec, stop_requested_);
-                    if (!stop_requested_.load()) {
-                        try {
-                            savePersistentBevCache(config_, dataset_, input_spec, cached_samples);
-                        } catch (const std::exception& exc) {
-                            std::cerr << "Warning: " << exc.what()
-                                      << ". Continuing with the in-memory cache." << std::endl;
-                        }
-                    }
+                persistent_cache = openPersistentBevCache(config_, dataset_, input_spec);
+                if (!persistent_cache &&
+                    buildPersistentBevCache(config_, dataset_, input_spec, stop_requested_)) {
+                    persistent_cache = openPersistentBevCache(config_, dataset_, input_spec);
+                }
+                if (!stop_requested_.load() && !persistent_cache) {
+                    throw std::runtime_error("Failed to prepare the disk-backed BEV cache");
                 }
                 if (!stop_requested_.load()) {
                     std::cout << "Precomputed BEV cache is ready. Starting inference with "
@@ -2614,9 +2663,9 @@ private:
             });
 
             BlockingQueue<PreparedItem> prepared_queue(kMaxPreparedQueue);
-            const auto* cache = config_.precompute_bev ? &cached_samples : nullptr;
             PreprocessWorker preprocess_worker(config_, dataset_, input_spec, prepared_queue,
-                                               stop_requested_, use_precomputed_bev_, cache);
+                                               stop_requested_, use_precomputed_bev_,
+                                               persistent_cache.get());
             std::thread preprocess_thread(std::ref(preprocess_worker));
 
             try {
@@ -2931,7 +2980,7 @@ int main(int argc, char* argv[]) {
         }
 
         DemoKittiDataset demo_dataset(config);
-        BlockingQueue<RenderItem> render_queue;
+        BlockingQueue<RenderItem> render_queue(kMaxRenderQueue);
         std::atomic<bool> stop_requested{false};
         std::atomic<bool> use_precomputed_bev{false};
 
@@ -2949,6 +2998,7 @@ int main(int argc, char* argv[]) {
         }
 
         stop_requested.store(true);
+        render_queue.close();
         inference_thread.join();
         return 0;
     } catch (const cxxopts::exceptions::exception& exc) {
