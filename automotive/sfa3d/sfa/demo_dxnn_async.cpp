@@ -5,20 +5,27 @@
 #include <QApplication>
 #include <QCloseEvent>
 #include <QColor>
+#include <QDialog>
 #include <QEventLoop>
 #include <QFont>
 #include <QFontDatabase>
 #include <QFontInfo>
 #include <QFontMetrics>
+#include <QGraphicsDropShadowEffect>
+#include <QGuiApplication>
 #include <QImage>
 #include <QKeyEvent>
+#include <QLabel>
 #include <QPainter>
+#include <QPixmap>
 #include <QPoint>
 #include <QPushButton>
 #include <QRect>
 #include <QResizeEvent>
+#include <QScreen>
 #include <QSize>
 #include <QString>
+#include <QVBoxLayout>
 #include <QWidget>
 
 #include <algorithm>
@@ -31,6 +38,7 @@
 #include <cstdlib>
 #include <cstdint>
 #include <cstring>
+#include <deque>
 #include <exception>
 #include <filesystem>
 #include <fstream>
@@ -38,6 +46,7 @@
 #include <iostream>
 #include <limits>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <numeric>
 #include <optional>
@@ -46,6 +55,7 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -59,6 +69,8 @@ constexpr int kBevHeight = 608;
 constexpr int kHmWidth = 152;
 constexpr int kHmHeight = 152;
 constexpr int kNumClasses = 3;
+constexpr int kFullscreenPanelMargin = 32;
+constexpr int kInfoButtonCanvasY = 450;
 constexpr int kDefaultDetectionPaletteIndex = 0;  // --color 1 (aurora)
 constexpr double kBBoxLineWidthScale = 0.8;
 constexpr int kDownRatio = 4;
@@ -77,6 +89,12 @@ constexpr const char* kTitleText =
     "Super Fast and Accurate 3D Object Detection based on 3D LiDAR Point Clouds (SFA3D)";
 constexpr size_t kMaxPreparedQueue = 4;
 constexpr auto kPreparedQueuePollInterval = std::chrono::milliseconds(1);
+constexpr auto kInferenceFpsWindow = std::chrono::seconds(5);
+constexpr auto kInferenceFpsUpdateInterval = std::chrono::milliseconds(200);
+constexpr std::array<char, 8> kBevCacheMagic = {'S', 'F', 'A', '3', 'D', 'P', 'C', '1'};
+constexpr uint32_t kBevCacheVersion = 1;
+constexpr uint64_t kFnvOffsetBasis = 1469598103934665603ULL;
+constexpr uint64_t kFnvPrime = 1099511628211ULL;
 
 struct FontPreset {
     const char* name;
@@ -242,7 +260,9 @@ struct Config {
     bool exit_btn = false;
     int color_palette_index = kDefaultDetectionPaletteIndex;
     int font_preset_index = 0;
+    std::string language = "en";
     bool loop = false;
+    bool precompute_bev = false;
     bool debug = false;
     double timing_cpu_scale = 1.0;
 
@@ -323,8 +343,8 @@ struct SampleResult {
     int64_t sequence_idx = 0;
     int dataset_idx = 0;
     fs::path img_path;
-    BevMap front_bevmap;
-    BevMap back_bevmap;
+    cv::Mat front_bev_image;
+    cv::Mat back_bev_image;
     cv::Mat img_rgb;
     std::optional<DetectionsByClass> front_detections;
     std::optional<DetectionsByClass> back_detections;
@@ -338,8 +358,14 @@ struct SampleResult {
 
 struct PreparedSample {
     SampleResult sample;
-    std::vector<uint8_t> front_input;
-    std::vector<uint8_t> back_input;
+    std::shared_ptr<std::vector<uint8_t>> front_input;
+    std::shared_ptr<std::vector<uint8_t>> back_input;
+};
+
+struct LoadedSample {
+    SampleResult sample;
+    BevMap front_bevmap;
+    BevMap back_bevmap;
 };
 
 struct InputSpec {
@@ -358,7 +384,7 @@ struct CopiedTensor {
 struct AsyncJob {
     int64_t sequence_idx = 0;
     std::string side;
-    std::vector<uint8_t> input_data;
+    std::shared_ptr<std::vector<uint8_t>> input_data;
 };
 
 struct CompletedJob {
@@ -622,8 +648,12 @@ Config parseArgs(int argc, char* argv[]) {
                 kDetectionPalettes[kDefaultDetectionPaletteIndex].name))
         ("font", "UI font: " + fontPresetNames(),
             cxxopts::value<std::string>(font)->default_value(kFontPresets[0].name))
+        ("language", "SFA3D information language: en, ja, zh, or ko",
+            cxxopts::value<std::string>(config.language)->default_value("en"))
         ("loop", "Loop the input sequence forever",
             cxxopts::value<bool>(config.loop)->default_value("false"))
+        ("precompute-bev", "Load or create a persistent BEV/DXNN input cache before inference",
+            cxxopts::value<bool>(config.precompute_bev)->default_value("false"))
         ("debug", "Enable debug logs and stage timing instrumentation",
             cxxopts::value<bool>(config.debug)->default_value("false"))
         ("timing-cpu-scale", "Scale CPU-side timing totals for target CPU estimation in debug logs",
@@ -644,6 +674,13 @@ Config parseArgs(int argc, char* argv[]) {
     config.font_preset_index = fontPresetIndex(font);
     if (config.font_preset_index < 0) {
         throw std::runtime_error("--font expects one of: " + fontPresetNames());
+    }
+    std::transform(config.language.begin(), config.language.end(), config.language.begin(),
+                   [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+    const std::array<std::string, 4> supported_languages = {"en", "ja", "zh", "ko"};
+    if (std::find(supported_languages.begin(), supported_languages.end(), config.language) ==
+        supported_languages.end()) {
+        throw std::runtime_error("--language expects one of: en, ja, zh, ko");
     }
     if (config.timing_cpu_scale <= 0.0) {
         throw std::runtime_error("--timing-cpu-scale must be greater than 0");
@@ -769,6 +806,32 @@ BevMap flipBevMap(const BevMap& src) {
     return dst;
 }
 
+cv::Mat bevToMat(const BevMap& bevmap);
+
+void hashUint64(uint64_t& hash, uint64_t value) {
+    for (int shift = 0; shift < 64; shift += 8) {
+        hash ^= (value >> shift) & 0xFFU;
+        hash *= kFnvPrime;
+    }
+}
+
+uint64_t fileMetadataFingerprint(const fs::path& path) {
+    std::error_code ec;
+    const uint64_t size = fs::file_size(path, ec);
+    if (ec) {
+        throw std::runtime_error("Failed to inspect cache source " + path.string() + ": " + ec.message());
+    }
+    const auto modified = fs::last_write_time(path, ec);
+    if (ec) {
+        throw std::runtime_error("Failed to inspect cache source " + path.string() + ": " + ec.message());
+    }
+
+    uint64_t hash = kFnvOffsetBasis;
+    hashUint64(hash, size);
+    hashUint64(hash, static_cast<uint64_t>(modified.time_since_epoch().count()));
+    return hash;
+}
+
 class DemoKittiDataset {
 public:
     explicit DemoKittiDataset(const Config& config)
@@ -802,7 +865,27 @@ public:
         return sample_ids_.size();
     }
 
-    SampleResult loadBevmapFrontVsBack(size_t index, int64_t sequence_idx) const {
+    int sampleId(size_t index) const {
+        return sample_ids_.at(index);
+    }
+
+    fs::path bevCachePath() const {
+        return dataset_root_ / ".sfa3d_bev_cache_v1.bin";
+    }
+
+    uint64_t sourceFingerprint() const {
+        uint64_t hash = kFnvOffsetBasis;
+        hashUint64(hash, static_cast<uint64_t>(sample_ids_.size()));
+        for (const int sample_id : sample_ids_) {
+            const std::string name = formatSampleId(sample_id);
+            hashUint64(hash, static_cast<uint64_t>(sample_id));
+            hashUint64(hash, fileMetadataFingerprint(image_dir_ / (name + ".png")));
+            hashUint64(hash, fileMetadataFingerprint(lidar_dir_ / (name + ".bin")));
+        }
+        return hash;
+    }
+
+    LoadedSample loadBevmapFrontVsBack(size_t index, int64_t sequence_idx) const {
         const int sample_id = sample_ids_.at(index);
 
         Clock::time_point load_start;
@@ -830,18 +913,20 @@ public:
         }
         auto bev_maps = makeFrontBackBEVMaps(lidar);
 
-        SampleResult sample;
-        sample.sequence_idx = sequence_idx;
-        sample.dataset_idx = sample_id;
-        sample.img_path = img_path;
-        sample.front_bevmap = std::move(bev_maps.first);
-        sample.back_bevmap = std::move(bev_maps.second);
-        sample.img_rgb = std::move(img_rgb);
+        LoadedSample loaded;
+        loaded.sample.sequence_idx = sequence_idx;
+        loaded.sample.dataset_idx = sample_id;
+        loaded.sample.img_path = img_path;
+        loaded.sample.front_bev_image = bevToMat(bev_maps.first);
+        loaded.sample.back_bev_image = bevToMat(bev_maps.second);
+        loaded.sample.img_rgb = std::move(img_rgb);
+        loaded.front_bevmap = std::move(bev_maps.first);
+        loaded.back_bevmap = std::move(bev_maps.second);
         if (config_.debug) {
-            sample.timings.load_ms = load_ms;
-            sample.timings.make_bev_ms = elapsedMs(bev_start);
+            loaded.sample.timings.load_ms = load_ms;
+            loaded.sample.timings.make_bev_ms = elapsedMs(bev_start);
         }
-        return sample;
+        return loaded;
     }
 
 private:
@@ -1618,7 +1703,7 @@ void fillFullscreenSidePanels(cv::Mat& img, const Config& config, const SampleRe
     cv::line(canvas, cv::Point(center_x + img.cols, 0), cv::Point(center_x + img.cols, canvas.rows),
              kUiBorder, 1, cv::LINE_AA);
 
-    const int margin = 32;
+    const int margin = kFullscreenPanelMargin;
     const int panel_width = std::max(180, left_panel_width - margin * 2);
     cv::rectangle(canvas, cv::Rect(margin - 14, 50, panel_width + 28, canvas.rows - 100),
                   kUiPanel, cv::FILLED);
@@ -1694,11 +1779,63 @@ void fillFullscreenSidePanels(cv::Mat& img, const Config& config, const SampleRe
     img = std::move(canvas);
 }
 
+class Sfa3dInfoDialog : public QDialog {
+public:
+    Sfa3dInfoDialog(const fs::path& image_path, QWidget* parent)
+        : QDialog(parent) {
+        setWindowTitle("What is SFA3D?");
+        setModal(true);
+        setWindowFlag(Qt::FramelessWindowHint, true);
+        setStyleSheet("QDialog { background-color: #1e1e1e; border: 1px solid #3f3f46; }");
+
+        auto* layout = new QVBoxLayout(this);
+        layout->setContentsMargins(12, 12, 12, 12);
+        layout->setSpacing(10);
+
+        auto* image_label = new QLabel(this);
+        image_label->setAlignment(Qt::AlignCenter);
+        const QPixmap source(QString::fromStdString(image_path.string()));
+        if (source.isNull()) {
+            image_label->setText("Unable to load SFA3D information image.");
+            image_label->setStyleSheet("color: #f4f4f5; padding: 32px;");
+        } else {
+            const QScreen* screen = QGuiApplication::primaryScreen();
+            const QSize available = screen != nullptr ? screen->availableGeometry().size()
+                                                      : QSize(1280, 720);
+            const QSize maximum_image_size(
+                std::min(source.width(), static_cast<int>(available.width() * 0.80)),
+                std::min(source.height(), static_cast<int>(available.height() * 0.72)));
+            image_label->setPixmap(source.scaled(maximum_image_size, Qt::KeepAspectRatio,
+                                                  Qt::SmoothTransformation));
+        }
+        layout->addWidget(image_label);
+
+        auto* close_button = new QPushButton("Close", this);
+        close_button->setFixedSize(100, 34);
+        close_button->setStyleSheet(QString(R"(
+            QPushButton {
+                color: #f4f4f5;
+                background-color: #2d2d30;
+                border: 1px solid #3f3f46;
+                border-radius: 6px;
+                font-weight: bold;
+            }
+            QPushButton:hover { background-color: #3a3a3d; }
+            QPushButton:pressed { background-color: #005a9e; }
+        )"));
+        connect(close_button, &QPushButton::clicked, this, &QDialog::accept);
+        layout->addWidget(close_button, 0, Qt::AlignRight);
+        adjustSize();
+    }
+};
+
 class QtFrameViewer : public QWidget {
 public:
-    QtFrameViewer(const Config& config, std::atomic<bool>& stop_requested)
+    QtFrameViewer(const Config& config, std::atomic<bool>& stop_requested,
+                  std::atomic<bool>& use_precomputed_bev)
         : config_(config),
-          stop_requested_(stop_requested) {
+          stop_requested_(stop_requested),
+          use_precomputed_bev_(use_precomputed_bev) {
         setWindowTitle(kWindowName);
         setAutoFillBackground(false);
         setAttribute(Qt::WA_OpaquePaintEvent, true);
@@ -1706,6 +1843,97 @@ public:
         setFocusPolicy(Qt::StrongFocus);
         setMinimumSize(QSize(960, 540));
         setStyleSheet("background-color: #1e1e1e;");
+
+        if (config_.full_screen) {
+            info_button_ = new QPushButton("What is SFA3D?", this);
+            info_button_->setFixedSize(236, 56);
+            info_button_->setFocusPolicy(Qt::NoFocus);
+            info_button_->setCursor(Qt::PointingHandCursor);
+            info_button_->setToolTip("Learn more about SFA3D");
+            info_button_->setStyleSheet(QString(R"(
+                QPushButton {
+                    color: #ffffff;
+                    background: qlineargradient(
+                        x1: 0, y1: 0, x2: 1, y2: 1,
+                        stop: 0 #0a84ff,
+                        stop: 1 #005eb8
+                    );
+                    border: 2px solid #62b5ff;
+                    border-radius: 13px;
+                    font-size: 18px;
+                    font-weight: 700;
+                    padding: 0 18px;
+                }
+                QPushButton:hover {
+                    background: qlineargradient(
+                        x1: 0, y1: 0, x2: 1, y2: 1,
+                        stop: 0 #38a0ff,
+                        stop: 1 #0876d1
+                    );
+                    border-color: #a8d8ff;
+                }
+                QPushButton:pressed {
+                    color: #eaf6ff;
+                    background: #004f9e;
+                    border-color: #4ba7f7;
+                    padding-top: 2px;
+                }
+            )"));
+            auto* info_button_shadow = new QGraphicsDropShadowEffect(info_button_);
+            info_button_shadow->setBlurRadius(24.0);
+            info_button_shadow->setOffset(0.0, 5.0);
+            info_button_shadow->setColor(QColor(0, 94, 184, 180));
+            info_button_->setGraphicsEffect(info_button_shadow);
+            connect(info_button_, &QPushButton::clicked, this, [this] {
+                showInfoDialog();
+            });
+            info_button_->show();
+
+            if (config_.precompute_bev) {
+                use_precomputed_bev_button_ = new QPushButton("Use Precomputed BEV", this);
+                use_precomputed_bev_button_->setFixedSize(236, 50);
+                use_precomputed_bev_button_->setFocusPolicy(Qt::NoFocus);
+                use_precomputed_bev_button_->setCursor(Qt::PointingHandCursor);
+                use_precomputed_bev_button_->setToolTip(
+                    "Switch from real-time BEV generation to the precomputed BEV cache");
+                use_precomputed_bev_button_->setStyleSheet(QString(R"(
+                    QPushButton {
+                        color: #dceeff;
+                        background-color: #202d3a;
+                        border: 2px solid #438bc7;
+                        border-radius: 12px;
+                        font-size: 15px;
+                        font-weight: 700;
+                        padding: 0 14px;
+                    }
+                    QPushButton:hover {
+                        color: #ffffff;
+                        background-color: #29445d;
+                        border-color: #79c2ff;
+                    }
+                    QPushButton:pressed {
+                        background-color: #17324a;
+                        border-color: #4ca8ef;
+                        padding-top: 2px;
+                    }
+                    QPushButton:disabled {
+                        color: #ddfff3;
+                        background-color: #17483b;
+                        border-color: #45c99a;
+                    }
+                )"));
+                connect(use_precomputed_bev_button_, &QPushButton::clicked, this, [this] {
+                    use_precomputed_bev_.store(true, std::memory_order_release);
+                    use_precomputed_bev_button_->setText("Using Precomputed BEV");
+                    use_precomputed_bev_button_->setToolTip(
+                        "Precomputed BEV cache is now active");
+                    use_precomputed_bev_button_->setCursor(Qt::ArrowCursor);
+                    use_precomputed_bev_button_->setEnabled(false);
+                    std::cout << "Switched to precomputed BEV inputs." << std::endl;
+                });
+                use_precomputed_bev_button_->show();
+            }
+        }
 
         if (config_.exit_btn) {
             exit_button_ = new QPushButton("X", this);
@@ -1733,7 +1961,7 @@ public:
                 requestStop();
                 close();
             });
-            positionExitButton();
+            positionOverlayButtons();
             exit_button_->show();
         }
     }
@@ -1748,7 +1976,7 @@ public:
                 resize(QSize(frame_.cols, frame_.rows));
                 show();
             }
-            positionExitButton();
+            positionOverlayButtons();
         }
         update();
         QApplication::processEvents(QEventLoop::AllEvents, 1);
@@ -1800,7 +2028,7 @@ protected:
 
     void resizeEvent(QResizeEvent* event) override {
         QWidget::resizeEvent(event);
-        positionExitButton();
+        positionOverlayButtons();
     }
 
 private:
@@ -1815,18 +2043,61 @@ private:
         closed_ = true;
     }
 
-    void positionExitButton() {
-        if (exit_button_ == nullptr) {
-            return;
+    void showInfoDialog() {
+        if (info_dialog_ == nullptr) {
+            const fs::path image_path =
+                config_.repo_root / "assets" / ("sfa3d-" + config_.language + ".png");
+            info_dialog_ = new Sfa3dInfoDialog(image_path, this);
         }
+
+        info_dialog_->show();
+        info_dialog_->raise();
+        info_dialog_->activateWindow();
+    }
+
+    void positionOverlayButtons() {
         constexpr int margin = 18;
-        exit_button_->move(std::max(0, width() - exit_button_->width() - margin), margin);
-        exit_button_->raise();
+        if (info_button_ != nullptr) {
+            if (!frame_.empty()) {
+                const QRect frame_rect = targetRectFor(QSize(frame_.cols, frame_.rows));
+                const double scale = static_cast<double>(frame_rect.width()) /
+                                     static_cast<double>(frame_.cols);
+                const int left_panel_width = (frame_.cols - kBevWidth * 2) / 2;
+                const int panel_width = std::max(
+                    180, left_panel_width - kFullscreenPanelMargin * 2);
+                const double button_center_x =
+                    static_cast<double>(kFullscreenPanelMargin) + panel_width / 2.0;
+                const int x = frame_rect.x() +
+                              static_cast<int>(std::round(button_center_x * scale)) -
+                              info_button_->width() / 2;
+                const int y = frame_rect.y() +
+                              static_cast<int>(std::round(kInfoButtonCanvasY * scale));
+                info_button_->move(x, y);
+            }
+            info_button_->raise();
+        }
+        if (use_precomputed_bev_button_ != nullptr) {
+            if (info_button_ != nullptr) {
+                const int x = info_button_->x() +
+                              (info_button_->width() - use_precomputed_bev_button_->width()) / 2;
+                const int y = info_button_->y() + info_button_->height() + 14;
+                use_precomputed_bev_button_->move(x, y);
+            }
+            use_precomputed_bev_button_->raise();
+        }
+        if (exit_button_ != nullptr) {
+            exit_button_->move(std::max(0, width() - exit_button_->width() - margin), margin);
+            exit_button_->raise();
+        }
     }
 
     const Config& config_;
     std::atomic<bool>& stop_requested_;
+    std::atomic<bool>& use_precomputed_bev_;
+    QPushButton* info_button_ = nullptr;
+    QPushButton* use_precomputed_bev_button_ = nullptr;
     QPushButton* exit_button_ = nullptr;
+    Sfa3dInfoDialog* info_dialog_ = nullptr;
     cv::Mat frame_;
     QRect target_rect_;
     bool shown_ = false;
@@ -1841,12 +2112,12 @@ cv::Mat renderSampleImage(const Config& config, const Calibration& calib, const 
 
     const auto& palette = kDetectionPalettes.at(static_cast<size_t>(config.color_palette_index));
 
-    cv::Mat front_bevmap = bevToMat(sample.front_bevmap);
+    cv::Mat front_bevmap = sample.front_bev_image.clone();
     cv::resize(front_bevmap, front_bevmap, cv::Size(kBevWidth, kBevHeight));
     drawPredictions(front_bevmap, *sample.front_detections, palette);
     cv::rotate(front_bevmap, front_bevmap, cv::ROTATE_90_COUNTERCLOCKWISE);
 
-    cv::Mat back_bevmap = bevToMat(sample.back_bevmap);
+    cv::Mat back_bevmap = sample.back_bev_image.clone();
     cv::resize(back_bevmap, back_bevmap, cv::Size(kBevWidth, kBevHeight));
     drawPredictions(back_bevmap, *sample.back_detections, palette);
     cv::rotate(back_bevmap, back_bevmap, cv::ROTATE_90_CLOCKWISE);
@@ -1914,15 +2185,316 @@ void printTimingLog(const Config& config, const SampleResult& sample) {
     std::cout << oss.str() << std::endl;
 }
 
+PreparedSample prepareDatasetSample(const Config& config, const DemoKittiDataset& dataset,
+                                    const InputSpec& input_spec, size_t sample_idx,
+                                    int64_t sequence_idx) {
+    LoadedSample loaded = dataset.loadBevmapFrontVsBack(sample_idx, sequence_idx);
+    PreparedSample prepared;
+    prepared.sample = std::move(loaded.sample);
+
+    Clock::time_point prepare_start;
+    if (config.debug) {
+        prepare_start = Clock::now();
+    }
+    prepared.front_input = std::make_shared<std::vector<uint8_t>>(
+        prepareDxnnInput(input_spec, loaded.front_bevmap));
+    prepared.back_input = std::make_shared<std::vector<uint8_t>>(
+        prepareDxnnInput(input_spec, loaded.back_bevmap));
+    if (config.debug) {
+        prepared.sample.timings.prepare_input_ms = elapsedMs(prepare_start);
+    }
+    return prepared;
+}
+
+size_t cachedSampleBytes(const PreparedSample& prepared) {
+    size_t bytes = prepared.front_input ? prepared.front_input->size() : 0;
+    bytes += prepared.back_input ? prepared.back_input->size() : 0;
+    bytes += prepared.sample.img_rgb.total() * prepared.sample.img_rgb.elemSize();
+    bytes += prepared.sample.front_bev_image.total() * prepared.sample.front_bev_image.elemSize();
+    bytes += prepared.sample.back_bev_image.total() * prepared.sample.back_bev_image.elemSize();
+    return bytes;
+}
+
+template <typename T>
+void writeCacheValue(std::ostream& output, const T& value) {
+    static_assert(std::is_trivially_copyable<T>::value, "Cache values must be trivially copyable");
+    output.write(reinterpret_cast<const char*>(&value), sizeof(T));
+    if (!output) {
+        throw std::runtime_error("Failed to write BEV cache");
+    }
+}
+
+template <typename T>
+T readCacheValue(std::istream& input) {
+    static_assert(std::is_trivially_copyable<T>::value, "Cache values must be trivially copyable");
+    T value{};
+    input.read(reinterpret_cast<char*>(&value), sizeof(T));
+    if (!input) {
+        throw std::runtime_error("Unexpected end of BEV cache");
+    }
+    return value;
+}
+
+void writeCacheBuffer(std::ostream& output, const std::shared_ptr<std::vector<uint8_t>>& buffer) {
+    if (!buffer || buffer->empty()) {
+        throw std::runtime_error("Cannot cache an empty DXNN input buffer");
+    }
+    writeCacheValue(output, static_cast<uint64_t>(buffer->size()));
+    output.write(reinterpret_cast<const char*>(buffer->data()),
+                 static_cast<std::streamsize>(buffer->size()));
+    if (!output) {
+        throw std::runtime_error("Failed to write DXNN input to BEV cache");
+    }
+}
+
+std::shared_ptr<std::vector<uint8_t>> readCacheBuffer(std::istream& input, size_t expected_size) {
+    const uint64_t size = readCacheValue<uint64_t>(input);
+    if (size != expected_size) {
+        throw std::runtime_error("Cached DXNN input size does not match the model");
+    }
+    auto buffer = std::make_shared<std::vector<uint8_t>>(static_cast<size_t>(size));
+    input.read(reinterpret_cast<char*>(buffer->data()), static_cast<std::streamsize>(buffer->size()));
+    if (!input) {
+        throw std::runtime_error("Unexpected end of cached DXNN input");
+    }
+    return buffer;
+}
+
+void writeCacheMat(std::ostream& output, const cv::Mat& source) {
+    if (source.empty()) {
+        throw std::runtime_error("Cannot cache an empty image");
+    }
+    const cv::Mat image = source.isContinuous() ? source : source.clone();
+    const int32_t rows = image.rows;
+    const int32_t cols = image.cols;
+    const int32_t type = image.type();
+    const uint64_t size = image.total() * image.elemSize();
+    writeCacheValue(output, rows);
+    writeCacheValue(output, cols);
+    writeCacheValue(output, type);
+    writeCacheValue(output, size);
+    output.write(reinterpret_cast<const char*>(image.data), static_cast<std::streamsize>(size));
+    if (!output) {
+        throw std::runtime_error("Failed to write image to BEV cache");
+    }
+}
+
+cv::Mat readCacheMat(std::istream& input, int expected_rows = 0, int expected_cols = 0) {
+    const int32_t rows = readCacheValue<int32_t>(input);
+    const int32_t cols = readCacheValue<int32_t>(input);
+    const int32_t type = readCacheValue<int32_t>(input);
+    const uint64_t size = readCacheValue<uint64_t>(input);
+    if (rows <= 0 || cols <= 0 || rows > 10000 || cols > 10000 || type != CV_8UC3) {
+        throw std::runtime_error("Invalid image metadata in BEV cache");
+    }
+    if ((expected_rows > 0 && rows != expected_rows) ||
+        (expected_cols > 0 && cols != expected_cols)) {
+        throw std::runtime_error("Cached BEV image dimensions do not match this build");
+    }
+
+    cv::Mat image(rows, cols, type);
+    const uint64_t expected_size = image.total() * image.elemSize();
+    if (size != expected_size) {
+        throw std::runtime_error("Cached image byte size is invalid");
+    }
+    input.read(reinterpret_cast<char*>(image.data), static_cast<std::streamsize>(size));
+    if (!input) {
+        throw std::runtime_error("Unexpected end of cached image");
+    }
+    return image;
+}
+
+void writeCacheHeader(std::ostream& output, const Config& config, const DemoKittiDataset& dataset,
+                      const InputSpec& input_spec) {
+    output.write(kBevCacheMagic.data(), static_cast<std::streamsize>(kBevCacheMagic.size()));
+    writeCacheValue(output, kBevCacheVersion);
+    writeCacheValue(output, dataset.sourceFingerprint());
+    writeCacheValue(output, fileMetadataFingerprint(config.pretrained_path));
+    writeCacheValue(output, static_cast<uint64_t>(dataset.size()));
+    writeCacheValue(output, static_cast<int32_t>(input_spec.dtype));
+    writeCacheValue(output, static_cast<uint64_t>(input_spec.byte_size));
+    writeCacheValue(output, static_cast<uint32_t>(input_spec.shape.size()));
+    for (const int64_t dimension : input_spec.shape) {
+        writeCacheValue(output, dimension);
+    }
+}
+
+void validateCacheHeader(std::istream& input, const Config& config, const DemoKittiDataset& dataset,
+                         const InputSpec& input_spec) {
+    std::array<char, kBevCacheMagic.size()> magic{};
+    input.read(magic.data(), static_cast<std::streamsize>(magic.size()));
+    if (!input || magic != kBevCacheMagic) {
+        throw std::runtime_error("BEV cache magic does not match");
+    }
+    if (readCacheValue<uint32_t>(input) != kBevCacheVersion) {
+        throw std::runtime_error("BEV cache version does not match");
+    }
+    if (readCacheValue<uint64_t>(input) != dataset.sourceFingerprint()) {
+        throw std::runtime_error("KITTI source data changed");
+    }
+    if (readCacheValue<uint64_t>(input) != fileMetadataFingerprint(config.pretrained_path)) {
+        throw std::runtime_error("DXNN model changed");
+    }
+    if (readCacheValue<uint64_t>(input) != dataset.size()) {
+        throw std::runtime_error("KITTI sample count changed");
+    }
+    if (readCacheValue<int32_t>(input) != static_cast<int32_t>(input_spec.dtype) ||
+        readCacheValue<uint64_t>(input) != input_spec.byte_size) {
+        throw std::runtime_error("DXNN input format changed");
+    }
+    const uint32_t shape_size = readCacheValue<uint32_t>(input);
+    if (shape_size != input_spec.shape.size()) {
+        throw std::runtime_error("DXNN input rank changed");
+    }
+    for (size_t i = 0; i < input_spec.shape.size(); ++i) {
+        if (readCacheValue<int64_t>(input) != input_spec.shape[i]) {
+            throw std::runtime_error("DXNN input shape changed");
+        }
+    }
+}
+
+std::optional<std::vector<PreparedSample>> loadPersistentBevCache(
+    const Config& config, const DemoKittiDataset& dataset, const InputSpec& input_spec) {
+    const fs::path cache_path = dataset.bevCachePath();
+    if (!fs::is_regular_file(cache_path)) {
+        return std::nullopt;
+    }
+
+    const auto start = Clock::now();
+    std::cout << "Loading persistent BEV cache: " << cache_path << std::endl;
+    try {
+        std::ifstream input(cache_path, std::ios::binary);
+        if (!input) {
+            throw std::runtime_error("Failed to open cache file");
+        }
+        validateCacheHeader(input, config, dataset, input_spec);
+
+        size_t cached_bytes = 0;
+        std::vector<PreparedSample> cached_samples;
+        cached_samples.reserve(dataset.size());
+        for (size_t sample_idx = 0; sample_idx < dataset.size(); ++sample_idx) {
+            PreparedSample prepared;
+            prepared.sample.sequence_idx = static_cast<int64_t>(sample_idx);
+            prepared.sample.dataset_idx = readCacheValue<int32_t>(input);
+            if (prepared.sample.dataset_idx != dataset.sampleId(sample_idx)) {
+                throw std::runtime_error("Cached KITTI sample order changed");
+            }
+            prepared.sample.img_rgb = readCacheMat(input);
+            prepared.sample.front_bev_image = readCacheMat(input, kBevHeight, kBevWidth);
+            prepared.sample.back_bev_image = readCacheMat(input, kBevHeight, kBevWidth);
+            prepared.front_input = readCacheBuffer(input, input_spec.byte_size);
+            prepared.back_input = readCacheBuffer(input, input_spec.byte_size);
+            cached_bytes += cachedSampleBytes(prepared);
+            cached_samples.push_back(std::move(prepared));
+        }
+
+        const double gib = static_cast<double>(cached_bytes) / (1024.0 * 1024.0 * 1024.0);
+        std::cout << std::fixed << std::setprecision(2)
+                  << "Persistent BEV cache loaded: " << elapsedMs(start) / 1000.0
+                  << "s, memory=" << gib << " GiB" << std::endl;
+        return cached_samples;
+    } catch (const std::exception& exc) {
+        std::cerr << "Ignoring persistent BEV cache (" << exc.what()
+                  << "). It will be rebuilt." << std::endl;
+        return std::nullopt;
+    }
+}
+
+void savePersistentBevCache(const Config& config, const DemoKittiDataset& dataset,
+                            const InputSpec& input_spec,
+                            const std::vector<PreparedSample>& cached_samples) {
+    if (cached_samples.size() != dataset.size()) {
+        throw std::runtime_error("Cannot save an incomplete BEV cache");
+    }
+
+    const fs::path cache_path = dataset.bevCachePath();
+    fs::path temporary_path = cache_path;
+    temporary_path += ".tmp";
+    std::error_code ec;
+    fs::remove(temporary_path, ec);
+
+    try {
+        std::ofstream output(temporary_path, std::ios::binary | std::ios::trunc);
+        if (!output) {
+            throw std::runtime_error("Failed to create " + temporary_path.string());
+        }
+        writeCacheHeader(output, config, dataset, input_spec);
+        for (const auto& prepared : cached_samples) {
+            writeCacheValue(output, static_cast<int32_t>(prepared.sample.dataset_idx));
+            writeCacheMat(output, prepared.sample.img_rgb);
+            writeCacheMat(output, prepared.sample.front_bev_image);
+            writeCacheMat(output, prepared.sample.back_bev_image);
+            writeCacheBuffer(output, prepared.front_input);
+            writeCacheBuffer(output, prepared.back_input);
+        }
+        output.close();
+        if (!output) {
+            throw std::runtime_error("Failed to finalize persistent BEV cache");
+        }
+
+        ec.clear();
+        fs::remove(cache_path, ec);
+        ec.clear();
+        fs::rename(temporary_path, cache_path, ec);
+        if (ec) {
+            throw std::runtime_error("Failed to install persistent BEV cache: " + ec.message());
+        }
+        std::cout << "Persistent BEV cache saved: " << cache_path << std::endl;
+    } catch (...) {
+        fs::remove(temporary_path, ec);
+        throw;
+    }
+}
+
+std::vector<PreparedSample> precomputeDataset(const Config& config, const DemoKittiDataset& dataset,
+                                              const InputSpec& input_spec,
+                                              std::atomic<bool>& stop_requested) {
+    std::cout << "Precomputing " << dataset.size()
+              << " BEV samples before inference..." << std::endl;
+    const auto start = Clock::now();
+    size_t cached_bytes = 0;
+    std::vector<PreparedSample> cached_samples;
+    cached_samples.reserve(dataset.size());
+
+    for (size_t sample_idx = 0; sample_idx < dataset.size(); ++sample_idx) {
+        if (stop_requested.load()) {
+            break;
+        }
+        PreparedSample prepared = prepareDatasetSample(config, dataset, input_spec, sample_idx,
+                                                       static_cast<int64_t>(sample_idx));
+        cached_bytes += cachedSampleBytes(prepared);
+        cached_samples.push_back(std::move(prepared));
+
+        const size_t completed = sample_idx + 1;
+        if (completed == dataset.size() || completed % 25 == 0) {
+            std::cout << "  BEV cache: " << completed << "/" << dataset.size() << std::endl;
+        }
+    }
+
+    if (!stop_requested.load() && cached_samples.size() != dataset.size()) {
+        throw std::runtime_error("BEV precomputation did not complete");
+    }
+
+    const double gib = static_cast<double>(cached_bytes) / (1024.0 * 1024.0 * 1024.0);
+    std::cout << std::fixed << std::setprecision(2)
+              << "BEV precompute complete: " << elapsedMs(start) / 1000.0 << "s, cache="
+              << gib << " GiB" << std::endl;
+    return cached_samples;
+}
+
 class PreprocessWorker {
 public:
     PreprocessWorker(const Config& config, const DemoKittiDataset& dataset, InputSpec input_spec,
-                     BlockingQueue<PreparedItem>& prepared_queue, std::atomic<bool>& stop_requested)
+                     BlockingQueue<PreparedItem>& prepared_queue, std::atomic<bool>& stop_requested,
+                     std::atomic<bool>& use_precomputed_bev,
+                     const std::vector<PreparedSample>* cached_samples = nullptr)
         : config_(config),
           dataset_(dataset),
           input_spec_(std::move(input_spec)),
           prepared_queue_(prepared_queue),
-          stop_requested_(stop_requested) {}
+          stop_requested_(stop_requested),
+          use_precomputed_bev_(use_precomputed_bev),
+          cached_samples_(cached_samples) {}
 
     void operator()() {
         run();
@@ -1937,7 +2509,8 @@ private:
                     if (stop_requested_.load()) {
                         break;
                     }
-                    prepared_queue_.push(PreparedItem::sampleItem(prepareSample(sample_idx, sequence_idx++)));
+                    prepared_queue_.push(PreparedItem::sampleItem(
+                        sampleForSequence(sample_idx, sequence_idx++)));
                 }
             } while (config_.loop && !stop_requested_.load());
         } catch (const std::exception& exc) {
@@ -1949,20 +2522,18 @@ private:
         prepared_queue_.push(PreparedItem::stopItem());
     }
 
-    PreparedSample prepareSample(size_t sample_idx, int64_t sequence_idx) const {
-        PreparedSample prepared;
-        prepared.sample = dataset_.loadBevmapFrontVsBack(sample_idx, sequence_idx);
-
-        Clock::time_point prepare_start;
-        if (config_.debug) {
-            prepare_start = Clock::now();
+    PreparedSample sampleForSequence(size_t sample_idx, int64_t sequence_idx) const {
+        if (cached_samples_ != nullptr &&
+            use_precomputed_bev_.load(std::memory_order_acquire)) {
+            PreparedSample prepared = cached_samples_->at(sample_idx);
+            prepared.sample.sequence_idx = sequence_idx;
+            prepared.sample.inference_fps = 0.0;
+            prepared.sample.front_detections.reset();
+            prepared.sample.back_detections.reset();
+            prepared.sample.timings = {};
+            return prepared;
         }
-        prepared.front_input = prepareDxnnInput(input_spec_, prepared.sample.front_bevmap);
-        prepared.back_input = prepareDxnnInput(input_spec_, prepared.sample.back_bevmap);
-        if (config_.debug) {
-            prepared.sample.timings.prepare_input_ms = elapsedMs(prepare_start);
-        }
-        return prepared;
+        return prepareDatasetSample(config_, dataset_, input_spec_, sample_idx, sequence_idx);
     }
 
     const Config& config_;
@@ -1970,16 +2541,20 @@ private:
     InputSpec input_spec_;
     BlockingQueue<PreparedItem>& prepared_queue_;
     std::atomic<bool>& stop_requested_;
+    std::atomic<bool>& use_precomputed_bev_;
+    const std::vector<PreparedSample>* cached_samples_ = nullptr;
 };
 
 class AsyncInferenceWorker {
 public:
     AsyncInferenceWorker(const Config& config, const DemoKittiDataset& dataset,
-                         BlockingQueue<RenderItem>& render_queue, std::atomic<bool>& stop_requested)
+                         BlockingQueue<RenderItem>& render_queue, std::atomic<bool>& stop_requested,
+                         std::atomic<bool>& use_precomputed_bev)
         : config_(config),
           dataset_(dataset),
           render_queue_(render_queue),
-          stop_requested_(stop_requested) {}
+          stop_requested_(stop_requested),
+          use_precomputed_bev_(use_precomputed_bev) {}
 
     void operator()() {
         run();
@@ -2010,13 +2585,38 @@ private:
             }
             const InputSpec input_spec = getInputSpec(engine);
 
+            std::vector<PreparedSample> cached_samples;
+            if (config_.precompute_bev) {
+                auto persistent_cache = loadPersistentBevCache(config_, dataset_, input_spec);
+                if (persistent_cache.has_value()) {
+                    cached_samples = std::move(*persistent_cache);
+                } else {
+                    cached_samples = precomputeDataset(config_, dataset_, input_spec, stop_requested_);
+                    if (!stop_requested_.load()) {
+                        try {
+                            savePersistentBevCache(config_, dataset_, input_spec, cached_samples);
+                        } catch (const std::exception& exc) {
+                            std::cerr << "Warning: " << exc.what()
+                                      << ". Continuing with the in-memory cache." << std::endl;
+                        }
+                    }
+                }
+                if (!stop_requested_.load()) {
+                    std::cout << "Precomputed BEV cache is ready. Starting inference with "
+                                 "real-time BEV generation."
+                              << std::endl;
+                }
+            }
+
             const auto output_names = engine.GetOutputTensorNames();
             engine.RegisterCallback([this, output_names](dxrt::TensorPtrs& outputs, void* user_arg) -> int {
                 return callback(outputs, user_arg, output_names);
             });
 
             BlockingQueue<PreparedItem> prepared_queue(kMaxPreparedQueue);
-            PreprocessWorker preprocess_worker(config_, dataset_, input_spec, prepared_queue, stop_requested_);
+            const auto* cache = config_.precompute_bev ? &cached_samples : nullptr;
+            PreprocessWorker preprocess_worker(config_, dataset_, input_spec, prepared_queue,
+                                               stop_requested_, use_precomputed_bev_, cache);
             std::thread preprocess_thread(std::ref(preprocess_worker));
 
             try {
@@ -2128,9 +2728,13 @@ private:
     }
 
     double submitJob(dxrt::InferenceEngine& engine, int64_t sequence_idx, const std::string& side,
-                     std::vector<uint8_t> input_data) {
+                     std::shared_ptr<std::vector<uint8_t>> input_data) {
         while (outstanding_jobs_ >= kMaxInferenceQueue) {
             processOneCompletion();
+        }
+
+        if (!input_data || input_data->empty()) {
+            throw std::runtime_error("Cannot submit an empty DXNN input buffer");
         }
 
         auto* job = new AsyncJob{sequence_idx, side, std::move(input_data)};
@@ -2142,7 +2746,7 @@ private:
             if (config_.debug) {
                 submit_start = Clock::now();
             }
-            engine.RunAsync(job->input_data.data(), job);
+            engine.RunAsync(job->input_data->data(), job);
             double submit_ms = 0.0;
             if (config_.debug) {
                 submit_ms = elapsedMs(submit_start);
@@ -2153,6 +2757,32 @@ private:
             delete job;
             throw;
         }
+    }
+
+    void recordInferenceCompletion(const Clock::time_point& completed_at) {
+        const auto insertion_point = std::upper_bound(
+            inference_completion_times_.begin(), inference_completion_times_.end(), completed_at);
+        inference_completion_times_.insert(insertion_point, completed_at);
+
+        const auto now = Clock::now();
+        const auto window_start = now - kInferenceFpsWindow;
+        while (!inference_completion_times_.empty() &&
+               inference_completion_times_.front() < window_start) {
+            inference_completion_times_.pop_front();
+        }
+
+        if (last_inference_fps_update_.has_value() &&
+            now - *last_inference_fps_update_ < kInferenceFpsUpdateInterval) {
+            return;
+        }
+
+        const auto measurement_start = std::max(
+            infer_start_time_.value_or(now), window_start);
+        const double seconds = std::max(
+            std::chrono::duration<double>(now - measurement_start).count(), 1e-6);
+        current_inference_fps_ =
+            static_cast<double>(inference_completion_times_.size()) / seconds;
+        last_inference_fps_update_ = now;
     }
 
     void processOneCompletion() {
@@ -2182,13 +2812,8 @@ private:
         } else {
             detections = decodeOutputs(config_, completed.outputs);
         }
-        ++completed_inferences_;
-
-        const auto start = infer_start_time_.value_or(completed.completed_at);
-        const std::chrono::duration<double> elapsed = completed.completed_at - start;
-        const double seconds = std::max(elapsed.count(), 1e-6);
-        const double inference_fps = static_cast<double>(completed_inferences_) / seconds;
-        sample.inference_fps = inference_fps;
+        recordInferenceCompletion(completed.completed_at);
+        sample.inference_fps = current_inference_fps_;
 
         if (completed.side == "front") {
             sample.front_detections = std::move(detections);
@@ -2208,19 +2833,23 @@ private:
     const DemoKittiDataset& dataset_;
     BlockingQueue<RenderItem>& render_queue_;
     std::atomic<bool>& stop_requested_;
+    std::atomic<bool>& use_precomputed_bev_;
     BlockingQueue<CompletedJob> completion_queue_;
     std::map<int64_t, SampleResult> samples_;
     int outstanding_jobs_ = 0;
     std::optional<std::chrono::steady_clock::time_point> infer_start_time_;
-    int completed_inferences_ = 0;
+    std::deque<Clock::time_point> inference_completion_times_;
+    std::optional<Clock::time_point> last_inference_fps_update_;
+    double current_inference_fps_ = 0.0;
 };
 
-void renderLoop(const Config& config, BlockingQueue<RenderItem>& render_queue, std::atomic<bool>& stop_requested) {
+void renderLoop(const Config& config, BlockingQueue<RenderItem>& render_queue,
+                std::atomic<bool>& stop_requested, std::atomic<bool>& use_precomputed_bev) {
     int64_t next_sequence_idx = 0;
     std::map<int64_t, SampleResult> pending_samples;
     bool worker_done = false;
     const Calibration calib(config.calib_path);
-    QtFrameViewer viewer(config, stop_requested);
+    QtFrameViewer viewer(config, stop_requested, use_precomputed_bev);
 
     try {
         while (true) {
@@ -2304,12 +2933,14 @@ int main(int argc, char* argv[]) {
         DemoKittiDataset demo_dataset(config);
         BlockingQueue<RenderItem> render_queue;
         std::atomic<bool> stop_requested{false};
+        std::atomic<bool> use_precomputed_bev{false};
 
-        AsyncInferenceWorker worker(config, demo_dataset, render_queue, stop_requested);
+        AsyncInferenceWorker worker(config, demo_dataset, render_queue, stop_requested,
+                                    use_precomputed_bev);
         std::thread inference_thread(std::ref(worker));
 
         try {
-            renderLoop(config, render_queue, stop_requested);
+            renderLoop(config, render_queue, stop_requested, use_precomputed_bev);
         } catch (...) {
             stop_requested.store(true);
             render_queue.close();

@@ -115,9 +115,9 @@ LAUNCHER_ITEMS = [
     {
         "title": "Optical Character Recognition",
         "title_i18n": {
-            "zh": "Optical Character Recognition",
-            "ja": "Optical Character Recognition",
-            "ko": "Optical Character Recognition",
+            "zh": "光学字符识别",
+            "ja": "光学文字認識",
+            "ko": "광학 문자 인식",
         },
         "image": "assets/demo-ocr.gif",
         "video_script": "../scripts/run_ocr_web.sh",
@@ -168,9 +168,9 @@ LAUNCHER_ITEMS = [
     {
         "title": "Drone Tracking",
         "title_i18n": {
-            "zh": "Drone Tracking",
-            "ja": "Drone Tracking",
-            "ko": "Drone Tracking",
+            "zh": "无人机跟踪",
+            "ja": "ドローン追跡",
+            "ko": "드론 추적",
         },
         "image": "assets/demo-dron.png",
         "video_script": "../scripts/./run_drone_1.sh",
