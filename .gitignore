@@ -100,4 +100,11 @@ Thumbs.db
 tmp/
 temp/
 
+############################
+# Demo assets (downloaded)
+############################
+
+workspace/
+.cache/
+
 

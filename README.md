@@ -22,6 +22,7 @@ DEEPX NPU 런타임(DXRT)을 활용한 데모 모음입니다. 객체 검출, �
 | `model-zoo/` | DEEPX Model Zoo HTML 문서 |
 | `perf-monitor/` | 성능 모니터링 Python 스크립트 |
 | `scripts/` | 런처 및 데모 실행 스크립트 |
+| `workspace/` | 데모 모델·비디오 (`setup_assets.sh`로 생성, git 미포함) |
 
 각 C++ 데모 폴더에는 `CMakeLists.txt`와 `build.sh`가 있습니다. `CMakeLists.txt`가 있는 디렉터리에서 바로 빌드할 수 있습니다.
 
@@ -100,6 +101,34 @@ cmake .. -DCMAKE_BUILD_TYPE=Release \
 ### 4. DEEPX NPU 하드웨어
 
 `.dxnn` 모델을 실제로 추론하려면 DEEPX NPU가 장착된 보드와 드라이버가 필요합니다. 빌드만 검증할 때는 DXRT 헤더·라이브러리만 있으면 됩니다.
+
+---
+
+## 데모 에셋
+
+`.dxnn` 모델과 테스트 비디오는 용량이 커서 git에 포함되지 않습니다. 저장소 루트에서 `setup_assets.sh`를 실행하면 [demo_assets.tar.gz](https://cs.deepx.ai/demo/demo_assets.tar.gz)를 내려받아 `workspace/`에 압축을 풉니다.
+
+```bash
+./setup_assets.sh
+```
+
+압축 해제 후 디렉터리 구조:
+
+```text
+workspace/
+├── models/    # *.dxnn 모델
+└── videos/    # 테스트 영상
+```
+
+| 옵션 / 환경 변수 | 설명 |
+|------------------|------|
+| `--force` | 기존 `workspace/`가 있어도 다시 다운로드·압축 해제 |
+| `--help` | 사용법 출력 |
+| `DX_DEMOS_ASSETS_URL` | 다운로드 URL 변경 (기본: `https://cs.deepx.ai/demo/demo_assets.tar.gz`) |
+
+`workspace/`가 이미 있으면 스크립트는 건너뜁니다. 다운로드 파일은 `.cache/demo_assets.tar.gz`에 캐시됩니다. `curl` 또는 `wget`이 필요합니다.
+
+데모 실행 전에 에셋을 먼저 받아 두세요.
 
 ---
 
@@ -185,6 +214,14 @@ SFA3D는 `DXRT_ROOT` CMake 변수로 DXRT 경로를 지정해야 할 수 있습�
 ```bash
 cmake .. -DCMAKE_BUILD_TYPE=Release -DDXRT_ROOT=/path/to/dx_rt
 ```
+
+**데모 에셋이 없는 경우**
+
+```bash
+./setup_assets.sh
+```
+
+`workspace/models/` 또는 `workspace/videos/`가 없으면 데모 실행 시 모델·비디오를 찾지 못할 수 있습니다. 다시 받으려면 `./setup_assets.sh --force`를 사용하세요.
 
 ---
 
