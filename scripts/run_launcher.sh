@@ -1,7 +1,12 @@
-cd ~/dx-demos/launcher
+#!/bin/bash
+ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$(dirname "$0")/../launcher"
 
+# Kill any existing processes
 ../scripts/kill_all.sh
 
+# Activate virtual environment
 source ../.venv/bin/activate
 
-python3 main.py
+# Run the launcher GUI
+python main.py

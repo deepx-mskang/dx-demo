@@ -29,8 +29,8 @@ from PyQt5.QtWidgets import (
 )
 
 # --- Window geometry ---
-WINDOW_WIDTH = 1600
-WINDOW_HEIGHT = 1000
+WINDOW_WIDTH = 1400
+WINDOW_HEIGHT = 900
 
 LANGUAGE_OPTIONS = [
     ("English", "en"),
@@ -47,10 +47,10 @@ MAIN_TITLE_I18N = {
 }
 
 # How many launcher cards to show (first N entries of LAUNCHER_ITEMS).
-NUM_ITEMS = 12
+NUM_ITEMS = 9
 
 # Grid columns; rows are computed as ceil(NUM_ITEMS / GRID_COLUMNS).
-GRID_COLUMNS = 4
+GRID_COLUMNS = 3
 
 # Launcher root (directory containing this file); assets and ready state live here.
 _ROOT = Path(__file__).resolve().parent
@@ -75,18 +75,6 @@ _ready_finishers: dict[str, Callable[[], None]] = {}
 DEFAULT_BUTTON_LOADING_SEC = 1.0
 LAUNCHER_ITEMS = [
     {
-        "title": "Hyundai Robotics - Delivery Robot (DAL-e)",
-        "title_i18n": {
-            "zh": "Hyundai Robotics - 配送机器人 (DAL-e)",
-            "ja": "Hyundai Robotics - 配送ロボット (DAL-e)",
-            "ko": "현대로보틱스 - 배송 로봇 (DAL-e)",
-        },
-        "image": "assets/demo-robotics.png",
-        "video_script": "../scripts/run_robotics_video.sh",
-        "camera_script": "../scripts/run_robotics.sh",
-        "loading_sec": 5,
-    },
-    {
         "title": "YOLO26-S (OD / POSE / SEG)",
         "title_i18n": {
             "zh": "YOLO26-S (目标检测 / 姿态 / 分割)",
@@ -94,9 +82,9 @@ LAUNCHER_ITEMS = [
             "ko": "YOLO26-S (객체 탐지 / 자세 / 분할)",
         },
         "image": "assets/demo-yolo26.png",
-        "video_script": "../scripts/run_yolo26_4_video.sh",
-        "camera_script": "../scripts/run_yolo26_4.sh",
-        "loading_sec": 5,
+        "video_script": "../scripts/run_yolo26_3_video.sh",
+        "camera_script": "../scripts/run_yolo26_3.sh",
+        "camera_label": "YOLO26",
     },
     {
         "title": "Mono Depth Estimation (Depth Anything v2)",
@@ -120,11 +108,9 @@ LAUNCHER_ITEMS = [
             "ko": "광학 문자 인식",
         },
         "image": "assets/demo-ocr.gif",
-        "video_script": "../scripts/run_ocr_web.sh",
-        "camera_script": "../scripts/run_ocr.sh",
+        "video_script": "../scripts/run_ocr.sh",
         "loading_sec": 30,
-        "video_label": "PaddleOCR v5",
-        "camera_label": "PaddleOCR v6",
+        "video_label": "PaddleOCR v6",
     },
     {
         "title": "YOLOv5S Multi-channel (36)",
@@ -178,19 +164,6 @@ LAUNCHER_ITEMS = [
         "loading_sec": 5,
     },
     {
-        "title": "DEEPX Model Zoo",
-        "title_i18n": {
-            "zh": "DEEPX 模型库",
-            "ja": "DEEPX モデル集",
-            "ko": "DEEPX 모델 저장소",
-        },
-        "image": "assets/demo-modelzoo.png",
-        "video_label": "Open",
-        "camera_label": "Close",
-        "video_script": "../scripts/run_modelzoo.sh",
-        "camera_script": "../scripts/kill_modelzoo.sh",
-    },
-    {
         "title": "CLIP Single-channel",
         "title_i18n": {
             "zh": "CLIP 单通道",
@@ -201,21 +174,6 @@ LAUNCHER_ITEMS = [
         "video_script": "../scripts/run_clip_single_video.sh",
         "camera_script": "../scripts/run_clip_single.sh",
         "loading_sec": 15,
-    },
-    {
-        "title": "CLIP Multi-channel",
-        "title_i18n": {
-            "zh": "CLIP 多通道",
-            "ja": "CLIP マルチチャンネル",
-            "ko": "CLIP 멀티채널",
-        },
-        "image": "assets/demo-clip.png",
-        "video_script": "../scripts/run_clip_video.sh",
-        "camera_script": "../scripts/run_clip.sh",
-        "loading_sec": 30,
-        # "extra_buttons": [{"label": "Export", "script": "../scripts/export.sh"}],
-        # "loading_sec": 12,           # 이 카드는 기본 12초
-        # "video_loading_sec": 20,     # Video만 20초
     },
     {
         "title": "Performance Monitoring (CPU / NPU)",
@@ -395,11 +353,13 @@ class LauncherItem(QWidget):
         image_path: Path,
         actions: list[tuple[str, str, int]],
         language_getter: Callable[[], str],
+        backend_getter: Callable[[], str],
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self._image_path = image_path
         self._language_getter = language_getter
+        self._backend_getter = backend_getter
         self._source_pixmap: QPixmap | None = None
 
         if image_path.is_file():
@@ -532,10 +492,11 @@ class LauncherItem(QWidget):
                     _ensure_ready_watcher().addPath(key)
 
                     language_code = self._language_getter()
+                    backend_code = self._backend_getter()
                     if not _run_shell_script(
                         scr,
                         language_code,
-                        {READY_FILE_ENV: key},
+                        {READY_FILE_ENV: key, "DX_BACKEND": backend_code},
                     ):
                         _finalize_wait()
                         return
@@ -656,8 +617,43 @@ class MainWindow(QWidget):
             "}"
         )
 
+        self._backend_combo = QComboBox()
+        self._backend_combo.addItem("C++", "cpp")
+        self._backend_combo.addItem("Python", "python")
+        self._backend_combo.setCurrentIndex(0)
+        self._backend_combo.setCursor(Qt.PointingHandCursor)
+        self._backend_combo.setFixedWidth(100)
+        self._backend_combo.setStyleSheet(
+            "QComboBox {"
+            " color: #ffffff;"
+            " background-color: #0a1f33;"
+            " border: 1px solid #00b4d8;"
+            " border-radius: 4px;"
+            " padding: 6px 12px;"
+            " font-size: 13px;"
+            "}"
+            "QComboBox:hover {"
+            " border-color: #48e1ff;"
+            "}"
+            "QComboBox::drop-down {"
+            " width: 28px;"
+            " border: none;"
+            "}"
+            "QComboBox QAbstractItemView {"
+            " color: #ffffff;"
+            " background-color: #0a1f33;"
+            " selection-background-color: #123a5c;"
+            " selection-color: #ffffff;"
+            " outline: none;"
+            "}"
+        )
+
         language_row.addWidget(language_label)
         language_row.addWidget(self._language_combo)
+        backend_label = QLabel("Backend")
+        backend_label.setStyleSheet("color: #c5f3ff; background: transparent; font-size: 13px; margin-left: 10px;")
+        language_row.addWidget(backend_label)
+        language_row.addWidget(self._backend_combo)
 
         left_balance = QWidget()
         left_balance.setFixedWidth(language_controls.sizeHint().width())
@@ -717,6 +713,7 @@ class MainWindow(QWidget):
                 image_path=img_path,
                 actions=actions,
                 language_getter=self._current_language_code,
+                backend_getter=self._current_backend_code,
             )
             self._launcher_items.append((item, cfg))
             row, col = i // GRID_COLUMNS, i % GRID_COLUMNS
@@ -729,6 +726,10 @@ class MainWindow(QWidget):
     def _current_language_code(self) -> str:
         code = self._language_combo.currentData()
         return str(code) if code else "en"
+
+    def _current_backend_code(self) -> str:
+        code = self._backend_combo.currentData()
+        return str(code) if code else "cpp"
 
     def _apply_language(self, _index: int | None = None) -> None:
         language_code = self._current_language_code()

@@ -1,8 +1,13 @@
 #!/bin/bash
+ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
-#terminator -e "bash -c 'dxtop; exec bash'"
-cd ~/dx-demos/perf-monitor
-
-source ../.venv/bin/activate
-
-python3 perf_monitor_design.py
+if [ "$DX_BACKEND" == "cpp" ]; then
+    echo "Launching C++ dxtop in a new terminal window..."
+    # 터미널 에뮬레이터(terminator)를 사용해 새 팝업 창을 띄웁니다.
+    # dxtop이 종료되더라도 창이 닫히지 않도록 exec bash를 추가합니다.
+    terminator -e "bash -c 'dxtop; exec bash'" &
+else
+    echo "Running Python GUI Performance Monitor..."
+    cd "${ROOT_DIR}"/apps/perf-monitor/python
+    source "${ROOT_DIR}"/.venv/bin/activate && python perf_monitor_design.py
+fi

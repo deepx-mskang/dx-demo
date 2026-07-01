@@ -106,5 +106,27 @@ temp/
 
 workspace/
 .cache/
+scratch/
 
+# Specific app ignores
+apps/*/workspace/
+apps/*/cpp/build/
+apps/*/cpp/.cache/
+apps/*/cpp/assets/*.dxnn
+apps/*/cpp/assets/*.txt
+apps/*/python/.temp/
+apps/*/python/.cache/
+apps/*/cpp/sfa3d/dataset/
+apps/*/*/build/
+
+# Ignore all model files and large archives
+*.dxnn
+*.tar.gz
+*.mp4
+*.mov
+*.bin
+
+
+
+scratch/
 

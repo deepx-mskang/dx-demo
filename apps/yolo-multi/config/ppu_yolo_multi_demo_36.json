@@ -1,0 +1,52 @@
+{
+    "usage": "multi",
+    "model_path": "../../../workspace/models/common/YOLOV5S_PPU.dxnn",
+    "model_name": "YOLOv5S_512_PPU",
+
+    "video_sources": [
+        [ "../../../workspace/videos/yolo-multi/57_360p.mp4", "offline", 82 ],
+        [ "../../../workspace/videos/yolo-multi/2_360p.mp4", "offline", 82 ],
+        [ "../../../workspace/videos/yolo-multi/3_360p.mp4", "offline", 82 ],
+        [ "../../../workspace/videos/yolo-multi/4_360p.mp4", "offline", 82 ],
+        [ "../../../workspace/videos/yolo-multi/5_360p.mp4", "offline", 82 ],
+        [ "../../../workspace/videos/yolo-multi/6_360p.mp4", "offline", 82 ],
+        [ "../../../workspace/videos/yolo-multi/7_360p.mp4", "offline", 82 ],
+        [ "../../../workspace/videos/yolo-multi/8_360p.mp4", "offline", 82 ],
+        [ "../../../workspace/videos/yolo-multi/10_360p.mp4", "offline", 82 ],
+        [ "../../../workspace/videos/yolo-multi/11_360p.mp4", "offline", 82 ],
+        [ "../../../workspace/videos/yolo-multi/12_360p.mp4", "offline", 82 ],
+        [ "../../../workspace/videos/yolo-multi/13_360p.mp4", "offline", 82 ],
+        [ "../../../workspace/videos/yolo-multi/14_360p.mp4", "offline", 82 ],
+        [ "../../../workspace/videos/yolo-multi/15_360p.mp4", "offline", 82 ],
+        [ "../../../workspace/videos/yolo-multi/16_360p.mp4", "offline", 82 ],
+        [ "/dev/video0", "camera" ],
+        [ "../../../workspace/videos/yolo-multi/17_360p.mp4", "offline", 82 ],
+        [ "../../../workspace/videos/yolo-multi/18_360p.mp4", "offline", 82 ],
+        [ "../../../workspace/videos/yolo-multi/19_360p.mp4", "offline", 82 ],
+        [ "../../../workspace/videos/yolo-multi/20_360p.mp4", "offline", 82 ],
+        [ "../../../workspace/videos/yolo-multi/55_360p.mp4", "offline", 82 ],
+        [ "../../../workspace/videos/yolo-multi/22_360p.mp4", "offline", 82 ],
+        [ "../../../workspace/videos/yolo-multi/23_360p.mp4", "offline", 82 ],
+        [ "../../../workspace/videos/yolo-multi/24_360p.mp4", "offline", 82 ],
+        [ "../../../workspace/videos/yolo-multi/25_360p.mp4", "offline", 82 ],
+        [ "../../../workspace/videos/yolo-multi/26_360p.mp4", "offline", 82 ],
+        [ "../../../workspace/videos/yolo-multi/27_360p.mp4", "offline", 82 ],
+        [ "../../../workspace/videos/yolo-multi/28_360p.mp4", "offline", 82 ],
+        [ "../../../workspace/videos/yolo-multi/29_360p.mp4", "offline", 82 ],
+        [ "../../../workspace/videos/yolo-multi/30_360p.mp4", "offline", 82 ],
+        [ "../../../workspace/videos/yolo-multi/50_360p.mp4", "offline", 82 ],
+        [ "../../../workspace/videos/yolo-multi/51_360p.mp4", "offline", 82 ],
+        [ "../../../workspace/videos/yolo-multi/52_360p.mp4", "offline", 82 ],
+        [ "../../../workspace/videos/yolo-multi/53_360p.mp4", "offline", 82 ],
+        [ "../../../workspace/videos/yolo-multi/54_360p.mp4", "offline", 82 ],
+        [ "../../../workspace/videos/yolo-multi/31_360p.mp4", "offline", 82 ]
+    ],
+
+    "display_config": {
+        "display_label": "output",
+        "capture_period": 24,
+        "output_width": 1920,
+        "output_height": 1080,
+        "show_fps": true
+    }
+}
