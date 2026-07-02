@@ -3,6 +3,12 @@ ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
 "$(dirname "$0")"/kill_yolo_multi.sh
 
+# Auto-download missing workspace assets
+if [ ! -d "${WORKSPACE}/models" ] || [ ! -d "${WORKSPACE}/videos" ]; then
+    echo "Workspace assets not found. Downloading..."
+    "${ROOT_DIR}/setup_assets.sh"
+fi
+
 cd "${ROOT_DIR}"/apps/yolo-multi
 
 # Load top-level configuration

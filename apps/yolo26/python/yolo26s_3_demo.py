@@ -629,7 +629,7 @@ def main():
     parser.add_argument("--model", type=str, default="../workspace/models/common/yolo26s.dxnn")
     parser.add_argument("--model-pose", type=str, default="../workspace/models/common/yolo26s-pose.dxnn")
     parser.add_argument("--model-seg", type=str, default="../workspace/models/common/yolo26s-seg.dxnn")
-    parser.add_argument("--demo-image", type=str, default="../workspace/assets/yolo26-demo.png")
+    parser.add_argument("--demo-image", type=str, default="../../assets/yolo26/yolo26-demo.png")
     parser.add_argument("-v", "--video", type=str, default="")
     parser.add_argument("--no-loop-video", action="store_true")
     args = parser.parse_args()

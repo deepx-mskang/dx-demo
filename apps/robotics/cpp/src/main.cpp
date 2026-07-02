@@ -308,7 +308,7 @@ bool is_exit_key(int key)
 
 cv::Mat load_mobed_static_picture_resized()
 {
-    const std::string path = std::string(PROJECT_ROOT_DIR) + "/assets/mobed.jpg";
+    const std::string path = std::string(PROJECT_ROOT_DIR) + "/../../../assets/robotics/mobed.jpg";
     cv::Mat src = cv::imread(path);
     cv::Mat out;
     if (src.empty())

@@ -197,7 +197,7 @@ std::string trimLine(std::string line)
 
 PaddleOcrEngine::PaddleOcrEngine(const EngineOptions& options)
     : rootDir_(resolveRoot(options.rootDir)),
-      assetsDir_(options.assetsDir.empty() ? rootDir_ / "assets" : fs::absolute(options.assetsDir)),
+      assetsDir_(options.assetsDir.empty() ? rootDir_ / "../../assets/paddle-ocr" : fs::absolute(options.assetsDir)),
       detModelName_(options.detModelName.empty() ? "det_v6_m_640.dxnn" : options.detModelName),
       detAsyncQueueSize_(std::clamp(options.detAsyncQueueSize, 1, kDetAsyncQueueMax)),
       recAsyncQueueSize_(std::clamp(options.recAsyncQueueSize, 1, kRecAsyncQueueMax))

@@ -164,7 +164,7 @@ fs::path defaultRoot()
 
 fs::path defaultModelsBaseDir(const fs::path& root)
 {
-    return root / "assets";
+    return root / "../../assets/paddle-ocr";
 }
 
 void notifyLauncherReady()
@@ -396,7 +396,7 @@ cv::Mat makeLeftDisplayImage(
 
 QString fontPathForLanguage(const fs::path& root)
 {
-    const fs::path v6AssetFontPath = root / "assets" / "NotoSansJP-VariableFont_wght.ttf";
+    const fs::path v6AssetFontPath = root / "../../assets/paddle-ocr" / "NotoSansJP-VariableFont_wght.ttf";
     if (fs::exists(v6AssetFontPath)) {
         return QString::fromStdString(v6AssetFontPath.string());
     }

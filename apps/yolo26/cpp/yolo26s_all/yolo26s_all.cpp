@@ -86,10 +86,10 @@ std::string absolutePath(const std::string& path) {
 }
 
 struct AppArgs {
-    std::string model = projectPath("cpp/assets/yolo26s.dxnn");
-    std::string model_pose = projectPath("cpp/assets/yolo26s-pose.dxnn");
-    std::string model_seg = projectPath("cpp/assets/yolo26s-seg.dxnn");
-    std::string model_cls = projectPath("cpp/assets/yolo26s-cls.dxnn");
+    std::string model = projectPath("../../workspace/models/common/yolo26s.dxnn");
+    std::string model_pose = projectPath("../../workspace/models/common/yolo26s-pose.dxnn");
+    std::string model_seg = projectPath("../../workspace/models/common/yolo26s-seg.dxnn");
+    std::string model_cls = projectPath("../../workspace/models/common/yolo26s-cls.dxnn");
     std::string video;
     bool no_loop_video = false;
     std::string device = "/dev/video0";

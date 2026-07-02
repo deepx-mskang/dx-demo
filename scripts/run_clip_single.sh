@@ -10,6 +10,12 @@ fi
 
 "$(dirname "$0")"/kill_clip.sh
 
+# Auto-download missing workspace assets
+if [ ! -d "${WORKSPACE}/models" ] || [ ! -d "${WORKSPACE}/videos" ]; then
+    echo "Workspace assets not found. Downloading..."
+    "${ROOT_DIR}/setup_assets.sh"
+fi
+
 cd "${ROOT_DIR}"/apps/clip-single
 
 
@@ -67,7 +73,7 @@ else
       --full_screen \
       --image-encoder "${WORKSPACE}/models/clip/ViT-L-14-quickgelu-dfn2b.dxnn" \
       --text-encoder "${WORKSPACE}/models/clip/ViT-L-14-quickgelu-dfn2b-text.onnx" \
-      --bpe-vocab "../assets/bpe_simple_vocab_16e6.txt.gz" \
+      --bpe-vocab "${ROOT_DIR}/assets/clip-single/bpe_simple_vocab_16e6.txt.gz" \
       --exit-btn \
       --input "${DX_CAMERA_DEV:-/dev/video0}"
 

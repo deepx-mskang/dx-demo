@@ -8,6 +8,12 @@ if [ "$DX_BACKEND" == "cpp" ]; then
     terminator -e "bash -c 'dxtop; exec bash'" &
 else
     echo "Running Python GUI Performance Monitor..."
+# Auto-download missing workspace assets
+if [ ! -d "${WORKSPACE}/models" ] || [ ! -d "${WORKSPACE}/videos" ]; then
+    echo "Workspace assets not found. Downloading..."
+    "${ROOT_DIR}/setup_assets.sh"
+fi
+
     cd "${ROOT_DIR}"/apps/perf-monitor/python
     source "${ROOT_DIR}"/.venv/bin/activate && python perf_monitor_design.py
 fi

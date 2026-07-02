@@ -26,6 +26,12 @@ done
 
 "$(dirname "$0")"/kill_automotive.sh
 
+# Auto-download missing workspace assets
+if [ ! -d "${WORKSPACE}/models" ] || [ ! -d "${WORKSPACE}/videos" ]; then
+    echo "Workspace assets not found. Downloading..."
+    "${ROOT_DIR}/setup_assets.sh"
+fi
+
 cd "${ROOT_DIR}"/apps/automotive
 
 
