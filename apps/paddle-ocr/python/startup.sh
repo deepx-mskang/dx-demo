@@ -271,9 +271,9 @@ verify_dataset() {
     # Verify we have image files
     local image_count=$(find "$dataset_dir" -name "*.png" -o -name "*.jpg" -o -name "*.jpeg" | wc -l)
     if [[ $image_count -lt 10 ]]; then
-        log "WARNING: Only $image_count images found. Please ensure image files are copied from C++ baseline"
+        log "WARNING: Only $image_count ../../assets/paddle-ocr/images found. Please ensure image files are copied from C++ baseline"
     else
-        log "✓ Dataset ready: $image_count images found"
+        log "✓ Dataset ready: $image_count ../../assets/paddle-ocr/images found"
     fi
     
     # Check if we have the correct format by examining labels.json structure
@@ -360,7 +360,7 @@ mkdir -p "$ASYNC_OUTPUT"
 # Function to run sync benchmark
 run_sync_benchmark() {
     log "=== Phase 1: Executing SYNC benchmark (sequential processing) ==="
-    local benchmark_cmd="python scripts/dxnn_benchmark.py --directory images --ground-truth images/labels.json --output output_sync --runs 1 --save-individual --mode sync"
+    local benchmark_cmd="python scripts/dxnn_benchmark.py --directory ../../assets/paddle-ocr/images --ground-truth ../../assets/paddle-ocr/images/labels.json --output output_sync --runs 1 --save-individual --mode sync"
     log "Sync benchmark command: $benchmark_cmd"
     $benchmark_cmd 2>&1 | tee -a "$LOG_DIR/sync_benchmark_${TIMESTAMP}.log"
     local exit_code=${PIPESTATUS[0]}
@@ -376,7 +376,7 @@ run_sync_benchmark() {
 # Function to run async benchmark
 run_async_benchmark() {
     log "=== Phase 2: Executing ASYNC benchmark (parallel processing) ==="
-    local benchmark_cmd="python scripts/dxnn_benchmark.py --directory images --ground-truth images/labels.json --output output_async --runs 1 --save-individual --mode async"
+    local benchmark_cmd="python scripts/dxnn_benchmark.py --directory ../../assets/paddle-ocr/images --ground-truth ../../assets/paddle-ocr/images/labels.json --output output_async --runs 1 --save-individual --mode async"
     log "Async benchmark command: $benchmark_cmd"
     $benchmark_cmd 2>&1 | tee -a "$LOG_DIR/async_benchmark_${TIMESTAMP}.log"
     local exit_code=${PIPESTATUS[0]}

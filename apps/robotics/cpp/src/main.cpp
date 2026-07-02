@@ -270,7 +270,7 @@ SsdParam make_fd_config()
                 {2, 2, 4},
                 {1, 1, 4},
             },
-            "./sample/face_prior_boxes.bin"
+            "../../assets/robotics/sample/face_prior_boxes.bin"
         },
     };
 }
