@@ -981,14 +981,14 @@ uint8_t toInputUint8(float value) {
     return static_cast<uint8_t>(scaled);
 }
 
-InputSpec getInputSpec(const dxrt::InferenceEngine& engine) {
-    const auto input_tensors = engine.GetInputs();
+InputSpec getInputSpec(dxrt::InferenceEngine& engine) {
+    auto input_tensors = engine.GetInputs();
     if (input_tensors.size() != 1) {
         throw std::runtime_error("This demo expects a single-input DXNN model, but got " +
                                  std::to_string(input_tensors.size()) + " inputs");
     }
 
-    const auto& input = input_tensors.front();
+    auto& input = input_tensors.front();
     InputSpec spec;
     spec.shape = input.shape();
     spec.dtype = input.type();
@@ -2149,12 +2149,12 @@ cv::Mat renderSampleImage(const Config& config, const Calibration& calib, const 
 
 void printDxnnIoInfo(dxrt::InferenceEngine& engine) {
     std::cout << "DXNN inputs:" << std::endl;
-    for (const auto& tensor : engine.GetInputs()) {
+    for (auto& tensor : engine.GetInputs()) {
         std::cout << "  - " << tensor.name() << ": shape=" << shapeToString(tensor.shape())
                   << ", dtype=" << dxrt::DataTypeToString(tensor.type()) << std::endl;
     }
     std::cout << "DXNN outputs:" << std::endl;
-    for (const auto& tensor : engine.GetOutputs()) {
+    for (auto& tensor : engine.GetOutputs()) {
         std::cout << "  - " << tensor.name() << ": shape=" << shapeToString(tensor.shape())
                   << ", dtype=" << dxrt::DataTypeToString(tensor.type()) << std::endl;
     }
@@ -2621,7 +2621,7 @@ private:
             dxrt::InferenceOption option;
             option.devices = {0};
             option.boundOption = dxrt::InferenceOption::BOUND_OPTION::NPU_ALL;
-            option.bufferCount = kMaxInferenceQueue;
+            // option.bufferCount = kMaxInferenceQueue;
 
 #if defined(DXRT_NFH_ACCELERATION_AVAILABLE) || defined(DXRT_CPU_OP_ACCELERATION_AVAILABLE)
             auto& config = dxrt::Configuration::GetInstance();

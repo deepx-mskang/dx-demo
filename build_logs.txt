@@ -1,0 +1,343 @@
+========================================
+Building C++ Projects
+========================================
+Found 12 build target(s).
+
+========================================
+Building: apps/automotive/cpp/pidnet/build.sh
+========================================
+-- Configuring done (0.0s)
+-- Generating done (0.0s)
+-- Build files have been written to: /home/mskang/dx-demos/apps/automotive/cpp/pidnet/build
+[ 50%] Built target pidnet_s_cityscapes_async
+[100%] Built target pidnet_s_cityscapes_sync
+
+========================================
+Building: apps/automotive/cpp/sfa3d/build.sh
+========================================
+-- Configuring done (0.0s)
+-- Generating done (0.0s)
+-- Build files have been written to: /home/mskang/dx-demos/apps/automotive/cpp/sfa3d/build
+[ 50%] Building CXX object CMakeFiles/sfa3d_async.dir/sfa/demo_dxnn_async.cpp.o
+/home/mskang/dx-demos/apps/automotive/cpp/sfa3d/sfa/demo_dxnn_async.cpp: In function ‘{anonymous}::InputSpec {anonymous}::getInputSpec(const dxrt::InferenceEngine&)’:
+/home/mskang/dx-demos/apps/automotive/cpp/sfa3d/sfa/demo_dxnn_async.cpp:985:48: error: passing ‘const dxrt::InferenceEngine’ as ‘this’ argument discards qualifiers [-fpermissive]
+  985 |     const auto input_tensors = engine.GetInputs();
+      |                                ~~~~~~~~~~~~~~~~^~
+In file included from /usr/local/include/dxrt/dxrt_api.h:18,
+                 from /home/mskang/dx-demos/apps/automotive/cpp/sfa3d/sfa/demo_dxnn_async.cpp:1:
+/usr/local/include/dxrt/inference_engine.h:255:13: note:   in call to ‘dxrt::Tensors dxrt::InferenceEngine::GetInputs(void*, uint64_t)’
+  255 |     Tensors GetInputs(void *ptr = nullptr, uint64_t phyAddr = 0);
+      |             ^~~~~~~~~
+/home/mskang/dx-demos/apps/automotive/cpp/sfa3d/sfa/demo_dxnn_async.cpp:994:28: error: passing ‘const dxrt::Tensor’ as ‘this’ argument discards qualifiers [-fpermissive]
+  994 |     spec.dtype = input.type();
+      |                  ~~~~~~~~~~^~
+In file included from /usr/local/include/dxrt/util.h:15,
+                 from /usr/local/include/dxrt/dxrt_api.h:17,
+                 from /home/mskang/dx-demos/apps/automotive/cpp/sfa3d/sfa/demo_dxnn_async.cpp:1:
+/usr/local/include/dxrt/tensor.h:45:15: note:   in call to ‘dxrt::DataType& dxrt::Tensor::type()’
+   45 |     DataType &type();
+      |               ^~~~
+/home/mskang/dx-demos/apps/automotive/cpp/sfa3d/sfa/demo_dxnn_async.cpp: In function ‘void {anonymous}::printDxnnIoInfo(dxrt::InferenceEngine&)’:
+/home/mskang/dx-demos/apps/automotive/cpp/sfa3d/sfa/demo_dxnn_async.cpp:2154:70: error: passing ‘const dxrt::Tensor’ as ‘this’ argument discards qualifiers [-fpermissive]
+ 2154 |                   << ", dtype=" << dxrt::DataTypeToString(tensor.type()) << std::endl;
+      |                                                           ~~~~~~~~~~~^~
+In file included from /usr/local/include/dxrt/util.h:15,
+                 from /usr/local/include/dxrt/dxrt_api.h:17,
+                 from /home/mskang/dx-demos/apps/automotive/cpp/sfa3d/sfa/demo_dxnn_async.cpp:1:
+/usr/local/include/dxrt/tensor.h:45:15: note:   in call to ‘dxrt::DataType& dxrt::Tensor::type()’
+   45 |     DataType &type();
+      |               ^~~~
+/home/mskang/dx-demos/apps/automotive/cpp/sfa3d/sfa/demo_dxnn_async.cpp:2159:70: error: passing ‘const dxrt::Tensor’ as ‘this’ argument discards qualifiers [-fpermissive]
+ 2159 |                   << ", dtype=" << dxrt::DataTypeToString(tensor.type()) << std::endl;
+      |                                                           ~~~~~~~~~~~^~
+In file included from /usr/local/include/dxrt/util.h:15,
+                 from /usr/local/include/dxrt/dxrt_api.h:17,
+                 from /home/mskang/dx-demos/apps/automotive/cpp/sfa3d/sfa/demo_dxnn_async.cpp:1:
+/usr/local/include/dxrt/tensor.h:45:15: note:   in call to ‘dxrt::DataType& dxrt::Tensor::type()’
+   45 |     DataType &type();
+      |               ^~~~
+/home/mskang/dx-demos/apps/automotive/cpp/sfa3d/sfa/demo_dxnn_async.cpp: In member function ‘void {anonymous}::AsyncInferenceWorker::run()’:
+/home/mskang/dx-demos/apps/automotive/cpp/sfa3d/sfa/demo_dxnn_async.cpp:2624:20: error: ‘class dxrt::InferenceOption’ has no member named ‘bufferCount’
+ 2624 |             option.bufferCount = kMaxInferenceQueue;
+      |                    ^~~~~~~~~~~
+make[2]: *** [CMakeFiles/sfa3d_async.dir/build.make:76: CMakeFiles/sfa3d_async.dir/sfa/demo_dxnn_async.cpp.o] Error 1
+make[1]: *** [CMakeFiles/Makefile2:83: CMakeFiles/sfa3d_async.dir/all] Error 2
+make: *** [Makefile:91: all] Error 2
+FAILED: apps/automotive/cpp/sfa3d/build.sh
+
+========================================
+Building: apps/automotive/cpp/yolopv2/build.sh
+========================================
+-- Configuring done (0.0s)
+-- Generating done (0.0s)
+-- Build files have been written to: /home/mskang/dx-demos/apps/automotive/cpp/yolopv2/build
+[ 50%] Building CXX object CMakeFiles/yolopv2_async.dir/demo_dxnn_qt5_async.cpp.o
+/home/mskang/dx-demos/apps/automotive/cpp/yolopv2/demo_dxnn_qt5_async.cpp: In function ‘void {anonymous}::print_tensors(const string&, const Tensors&)’:
+/home/mskang/dx-demos/apps/automotive/cpp/yolopv2/demo_dxnn_qt5_async.cpp:659:49: error: passing ‘const value_type’ {aka ‘const dxrt::Tensor’} as ‘this’ argument discards qualifiers [-fpermissive]
+  659 |                   << " type=" << tensors[i].type() << " shape=";
+      |                                  ~~~~~~~~~~~~~~~^~
+In file included from /usr/local/include/dxrt/util.h:15,
+                 from /usr/local/include/dxrt/dxrt_api.h:17,
+                 from /home/mskang/dx-demos/apps/automotive/cpp/yolopv2/demo_dxnn_qt5_async.cpp:21:
+/usr/local/include/dxrt/tensor.h:45:15: note:   in call to ‘dxrt::DataType& dxrt::Tensor::type()’
+   45 |     DataType &type();
+      |               ^~~~
+/home/mskang/dx-demos/apps/automotive/cpp/yolopv2/demo_dxnn_qt5_async.cpp: In function ‘{anonymous}::InputInfo {anonymous}::analyze_input(dxrt::InferenceEngine&, int)’:
+/home/mskang/dx-demos/apps/automotive/cpp/yolopv2/demo_dxnn_qt5_async.cpp:698:36: error: passing ‘const value_type’ {aka ‘const dxrt::Tensor’} as ‘this’ argument discards qualifiers [-fpermissive]
+  698 |     info.type = inputs.front().type();
+      |                 ~~~~~~~~~~~~~~~~~~~^~
+In file included from /usr/local/include/dxrt/util.h:15,
+                 from /usr/local/include/dxrt/dxrt_api.h:17,
+                 from /home/mskang/dx-demos/apps/automotive/cpp/yolopv2/demo_dxnn_qt5_async.cpp:21:
+/usr/local/include/dxrt/tensor.h:45:15: note:   in call to ‘dxrt::DataType& dxrt::Tensor::type()’
+   45 |     DataType &type();
+      |               ^~~~
+make[2]: *** [CMakeFiles/yolopv2_async.dir/build.make:76: CMakeFiles/yolopv2_async.dir/demo_dxnn_qt5_async.cpp.o] Error 1
+make[1]: *** [CMakeFiles/Makefile2:83: CMakeFiles/yolopv2_async.dir/all] Error 2
+make: *** [Makefile:91: all] Error 2
+FAILED: apps/automotive/cpp/yolopv2/build.sh
+
+========================================
+Building: apps/clip-single/cpp/build.sh
+========================================
+-- Configuring done (0.0s)
+-- Generating done (0.0s)
+-- Build files have been written to: /home/mskang/dx-demos/apps/clip-single/cpp/build
+[  0%] Built target camera_text_matcher_async_gui_cpp_autogen_timestamp_deps
+[ 16%] Built target camera_text_matcher_async_gui_cpp_autogen
+[ 33%] Building CXX object CMakeFiles/camera_text_matcher_async_gui_cpp.dir/main.cpp.o
+/home/mskang/dx-demos/apps/clip-single/cpp/main.cpp: In constructor ‘{anonymous}::ImageEncoderAsync::ImageEncoderAsync(const string&)’:
+/home/mskang/dx-demos/apps/clip-single/cpp/main.cpp:519:16: error: ‘class dxrt::InferenceOption’ has no member named ‘bufferCount’
+  519 |         option.bufferCount = kMaxAsyncJobs;
+      |                ^~~~~~~~~~~
+/home/mskang/dx-demos/apps/clip-single/cpp/main.cpp:522:50: error: passing ‘const value_type’ {aka ‘const dxrt::Tensor’} as ‘this’ argument discards qualifiers [-fpermissive]
+  522 |         if (inputs.empty() || inputs.front().type() != dxrt::DataType::FLOAT) {
+      |                               ~~~~~~~~~~~~~~~~~~~^~
+In file included from /usr/local/include/dxrt/util.h:15,
+                 from /usr/local/include/dxrt/dxrt_api.h:17,
+                 from /home/mskang/dx-demos/apps/clip-single/cpp/main.cpp:3:
+/usr/local/include/dxrt/tensor.h:45:15: note:   in call to ‘dxrt::DataType& dxrt::Tensor::type()’
+   45 |     DataType &type();
+      |               ^~~~
+make[2]: *** [CMakeFiles/camera_text_matcher_async_gui_cpp.dir/build.make:96: CMakeFiles/camera_text_matcher_async_gui_cpp.dir/main.cpp.o] Error 1
+make[1]: *** [CMakeFiles/Makefile2:86: CMakeFiles/camera_text_matcher_async_gui_cpp.dir/all] Error 2
+make: *** [Makefile:91: all] Error 2
+FAILED: apps/clip-single/cpp/build.sh
+
+========================================
+Building: apps/depth/cpp/build.sh
+========================================
+-- Configuring done (0.1s)
+-- Generating done (0.0s)
+-- Build files have been written to: /home/mskang/dx-demos/apps/depth/cpp/build
+[100%] Built target depth-demo
+
+========================================
+Building: apps/drone/cpp/build.sh
+========================================
+-- Configuring done (0.0s)
+-- Generating done (0.0s)
+-- Build files have been written to: /home/mskang/dx-demos/apps/drone/cpp/build
+[100%] Built target drone_mixformer
+
+========================================
+Building: apps/hand-landmark/cpp/build.sh
+========================================
+-- Configuring done (0.0s)
+-- Generating done (0.0s)
+-- Build files have been written to: /home/mskang/dx-demos/apps/hand-landmark/cpp/build
+[ 66%] Building CXX object CMakeFiles/hand-landmark-pose.dir/hand-landmark-pose.cpp.o
+[ 66%] Built target hand-landmark
+[ 66%] Building CXX object CMakeFiles/hand-landmark-detection.dir/hand-landmark-detection.cpp.o
+/home/mskang/dx-demos/apps/hand-landmark/cpp/hand-landmark-detection.cpp: In function ‘void {anonymous}::validate_model_shapes(dxrt::InferenceEngine&, dxrt::InferenceEngine&)’:
+/home/mskang/dx-demos/apps/hand-landmark/cpp/hand-landmark-detection.cpp:1237:58: error: passing ‘const dxrt::Tensor’ as ‘this’ argument discards qualifiers [-fpermissive]
+ 1237 |         palm_shape[3] != kPalmChannels || palm_input.type() != dxrt::DataType::UINT8) {
+      |                                           ~~~~~~~~~~~~~~~^~
+In file included from /usr/local/include/dxrt/util.h:15,
+                 from /usr/local/include/dxrt/dxrt_api.h:17,
+                 from /home/mskang/dx-demos/apps/hand-landmark/cpp/hand-landmark-detection.cpp:14:
+/usr/local/include/dxrt/tensor.h:45:15: note:   in call to ‘dxrt::DataType& dxrt::Tensor::type()’
+   45 |     DataType &type();
+      |               ^~~~
+/home/mskang/dx-demos/apps/hand-landmark/cpp/hand-landmark-detection.cpp:1244:22: error: passing ‘const dxrt::Tensor’ as ‘this’ argument discards qualifiers [-fpermissive]
+ 1244 |         lm_input.type() != dxrt::DataType::UINT8) {
+      |         ~~~~~~~~~~~~~^~
+In file included from /usr/local/include/dxrt/util.h:15,
+                 from /usr/local/include/dxrt/dxrt_api.h:17,
+                 from /home/mskang/dx-demos/apps/hand-landmark/cpp/hand-landmark-detection.cpp:14:
+/usr/local/include/dxrt/tensor.h:45:15: note:   in call to ‘dxrt::DataType& dxrt::Tensor::type()’
+   45 |     DataType &type();
+      |               ^~~~
+/home/mskang/dx-demos/apps/hand-landmark/cpp/hand-landmark-pose.cpp: In function ‘void {anonymous}::validate_hand_model_shapes(dxrt::InferenceEngine&, dxrt::InferenceEngine&)’:
+/home/mskang/dx-demos/apps/hand-landmark/cpp/hand-landmark-pose.cpp:1895:58: error: passing ‘const dxrt::Tensor’ as ‘this’ argument discards qualifiers [-fpermissive]
+ 1895 |         palm_shape[3] != kPalmChannels || palm_input.type() != dxrt::DataType::UINT8) {
+      |                                           ~~~~~~~~~~~~~~~^~
+In file included from /usr/local/include/dxrt/util.h:15,
+                 from /usr/local/include/dxrt/dxrt_api.h:17,
+                 from /home/mskang/dx-demos/apps/hand-landmark/cpp/hand-landmark-pose.cpp:15:
+/usr/local/include/dxrt/tensor.h:45:15: note:   in call to ‘dxrt::DataType& dxrt::Tensor::type()’
+   45 |     DataType &type();
+      |               ^~~~
+/home/mskang/dx-demos/apps/hand-landmark/cpp/hand-landmark-pose.cpp:1902:22: error: passing ‘const dxrt::Tensor’ as ‘this’ argument discards qualifiers [-fpermissive]
+ 1902 |         lm_input.type() != dxrt::DataType::UINT8) {
+      |         ~~~~~~~~~~~~~^~
+In file included from /usr/local/include/dxrt/util.h:15,
+                 from /usr/local/include/dxrt/dxrt_api.h:17,
+                 from /home/mskang/dx-demos/apps/hand-landmark/cpp/hand-landmark-pose.cpp:15:
+/usr/local/include/dxrt/tensor.h:45:15: note:   in call to ‘dxrt::DataType& dxrt::Tensor::type()’
+   45 |     DataType &type();
+      |               ^~~~
+/home/mskang/dx-demos/apps/hand-landmark/cpp/hand-landmark-pose.cpp: In function ‘void {anonymous}::validate_pose_model_shape(dxrt::InferenceEngine&, int*, int*)’:
+/home/mskang/dx-demos/apps/hand-landmark/cpp/hand-landmark-pose.cpp:1915:24: error: passing ‘const dxrt::Tensor’ as ‘this’ argument discards qualifiers [-fpermissive]
+ 1915 |         pose_input.type() != dxrt::DataType::UINT8) {
+      |         ~~~~~~~~~~~~~~~^~
+In file included from /usr/local/include/dxrt/util.h:15,
+                 from /usr/local/include/dxrt/dxrt_api.h:17,
+                 from /home/mskang/dx-demos/apps/hand-landmark/cpp/hand-landmark-pose.cpp:15:
+/usr/local/include/dxrt/tensor.h:45:15: note:   in call to ‘dxrt::DataType& dxrt::Tensor::type()’
+   45 |     DataType &type();
+      |               ^~~~
+make[2]: *** [CMakeFiles/hand-landmark-detection.dir/build.make:76: CMakeFiles/hand-landmark-detection.dir/hand-landmark-detection.cpp.o] Error 1
+make[1]: *** [CMakeFiles/Makefile2:113: CMakeFiles/hand-landmark-detection.dir/all] Error 2
+make[1]: *** Waiting for unfinished jobs....
+make[2]: *** [CMakeFiles/hand-landmark-pose.dir/build.make:76: CMakeFiles/hand-landmark-pose.dir/hand-landmark-pose.cpp.o] Error 1
+make[1]: *** [CMakeFiles/Makefile2:139: CMakeFiles/hand-landmark-pose.dir/all] Error 2
+make: *** [Makefile:91: all] Error 2
+FAILED: apps/hand-landmark/cpp/build.sh
+
+========================================
+Building: apps/paddle-ocr/cpp/build.sh
+========================================
+-- Configuring done (0.0s)
+-- Generating done (0.0s)
+-- Build files have been written to: /home/mskang/dx-demos/apps/paddle-ocr/cpp/build
+[  0%] Built target cam_ppocr_v6_demo_autogen_timestamp_deps
+[ 16%] Automatic MOC for target cam_ppocr_v6_demo
+[ 16%] Built target cam_ppocr_v6_demo_autogen
+[ 33%] Building CXX object CMakeFiles/cam_ppocr_v6_demo.dir/main.cpp.o
+[ 50%] Building CXX object CMakeFiles/cam_ppocr_v6_demo.dir/ocr_engine.cpp.o
+/home/mskang/dx-demos/apps/paddle-ocr/cpp/ocr_engine.cpp: In static member function ‘static void camocr::PaddleOcrEngine::validateModelInput(const cv::Mat&, const camocr::PaddleOcrEngine::ModelInputShape&, const char*, const string&)’:
+/home/mskang/dx-demos/apps/paddle-ocr/cpp/ocr_engine.cpp:150:23: warning: unused variable ‘shapeBytes’ [-Wunused-variable]
+  150 |     const std::size_t shapeBytes =
+      |                       ^~~~~~~~~~
+/home/mskang/dx-demos/apps/paddle-ocr/cpp/ocr_engine.cpp: In member function ‘std::unique_ptr<dxrt::InferenceEngine> camocr::PaddleOcrEngine::loadEngine(const std::filesystem::__cxx11::path&, int) const’:
+/home/mskang/dx-demos/apps/paddle-ocr/cpp/ocr_engine.cpp:246:16: error: ‘class dxrt::InferenceOption’ has no member named ‘bufferCount’
+  246 |         option.bufferCount = bufferCount;
+      |                ^~~~~~~~~~~
+make[2]: *** [CMakeFiles/cam_ppocr_v6_demo.dir/build.make:110: CMakeFiles/cam_ppocr_v6_demo.dir/ocr_engine.cpp.o] Error 1
+make[2]: *** Waiting for unfinished jobs....
+make[1]: *** [CMakeFiles/Makefile2:86: CMakeFiles/cam_ppocr_v6_demo.dir/all] Error 2
+make: *** [Makefile:91: all] Error 2
+FAILED: apps/paddle-ocr/cpp/build.sh
+
+========================================
+Building: apps/robotics/cpp/build.sh
+========================================
+-- Configuring done (0.1s)
+-- Generating done (0.0s)
+-- Build files have been written to: /home/mskang/dx-demos/apps/robotics/cpp/build
+[  9%] Building CXX object CMakeFiles/dx_model_crypto.dir/src/encrypted_model_engine.cpp.o
+/home/mskang/dx-demos/apps/robotics/cpp/src/encrypted_model_engine.cpp: In constructor ‘{anonymous}::EngineState::EngineState(const string&)’:
+/home/mskang/dx-demos/apps/robotics/cpp/src/encrypted_model_engine.cpp:94:30: error: no matching function for call to ‘dxrt::InferenceEngine::InferenceEngine(const uint8_t*, std::vector<unsigned char>::size_type)’
+   94 |             model_data.size()));
+      |                              ^
+In file included from /usr/local/include/dxrt/dxrt_api.h:18,
+                 from /home/mskang/dx-demos/apps/robotics/cpp/include/encrypted_model_engine.h:7,
+                 from /home/mskang/dx-demos/apps/robotics/cpp/src/encrypted_model_engine.cpp:1:
+/usr/local/include/dxrt/inference_engine.h:92:14: note: candidate: ‘dxrt::InferenceEngine::InferenceEngine(const string&, dxrt::InferenceOption&)’
+   92 |     explicit InferenceEngine(const std::string &modelPath, InferenceOption &option = DefaultInferenceOption);
+      |              ^~~~~~~~~~~~~~~
+/usr/local/include/dxrt/inference_engine.h:92:49: note:   no known conversion for argument 1 from ‘const uint8_t*’ {aka ‘const unsigned char*’} to ‘const string&’ {aka ‘const std::__cxx11::basic_string<char>&’}
+   92 |     explicit InferenceEngine(const std::string &modelPath, InferenceOption &option = DefaultInferenceOption);
+      |                              ~~~~~~~~~~~~~~~~~~~^~~~~~~~~
+make[2]: *** [CMakeFiles/dx_model_crypto.dir/build.make:76: CMakeFiles/dx_model_crypto.dir/src/encrypted_model_engine.cpp.o] Error 1
+make[1]: *** [CMakeFiles/Makefile2:85: CMakeFiles/dx_model_crypto.dir/all] Error 2
+make: *** [Makefile:136: all] Error 2
+FAILED: apps/robotics/cpp/build.sh
+
+========================================
+Building: apps/yolo26/cpp/yolo26s_3/build.sh
+========================================
+-- Configuring done (0.0s)
+-- Generating done (0.0s)
+-- Build files have been written to: /home/mskang/dx-demos/apps/yolo26/cpp/yolo26s_3/build
+[ 33%] Building CXX object CMakeFiles/yolo26s_3.dir/yolo26s_3.cpp.o
+In file included from /home/mskang/dx-demos/apps/yolo26/cpp/yolo26s_3/../object_detection/yolo26s/common/processors/result_converters.hpp:15,
+                 from /home/mskang/dx-demos/apps/yolo26/cpp/yolo26s_3/../object_detection/yolo26s/common/processors/yolo_detection_postprocessor.hpp:14,
+                 from /home/mskang/dx-demos/apps/yolo26/cpp/yolo26s_3/../object_detection/yolo26s/factory/yolo26s_factory.hpp:11,
+                 from /home/mskang/dx-demos/apps/yolo26/cpp/yolo26s_3/yolo26s_3.cpp:54:
+/home/mskang/dx-demos/apps/yolo26/cpp/yolo26s_3/../object_detection/yolo26s/common/processors/anchor_detection_postprocessor.hpp: In constructor ‘AnchorYOLOPostProcess::AnchorYOLOPostProcess(int, int, float, float, float, bool, const std::vector<std::__cxx11::basic_string<char> >&, const std::vector<std::__cxx11::basic_string<char> >&, const std::map<int, std::vector<std::pair<int, int> > >&, bool)’:
+/home/mskang/dx-demos/apps/yolo26/cpp/yolo26s_3/../object_detection/yolo26s/common/processors/anchor_detection_postprocessor.hpp:190:52: warning: ‘AnchorYOLOPostProcess::anchors_by_strides_’ will be initialized after [-Wreorder]
+  190 |     std::map<int, std::vector<std::pair<int,int>>> anchors_by_strides_;
+      |                                                    ^~~~~~~~~~~~~~~~~~~
+/home/mskang/dx-demos/apps/yolo26/cpp/yolo26s_3/../object_detection/yolo26s/common/processors/anchor_detection_postprocessor.hpp:187:10: warning:   ‘bool AnchorYOLOPostProcess::npu_supported_’ [-Wreorder]
+  187 |     bool npu_supported_;
+      |          ^~~~~~~~~~~~~~
+/home/mskang/dx-demos/apps/yolo26/cpp/yolo26s_3/../object_detection/yolo26s/common/processors/anchor_detection_postprocessor.hpp:61:5: warning:   when initialized here [-Wreorder]
+   61 |     AnchorYOLOPostProcess(int input_w, int input_h,
+      |     ^~~~~~~~~~~~~~~~~~~~~
+In file included from /home/mskang/dx-demos/apps/yolo26/cpp/yolo26s_3/../pose_estimation/yolo26s_pose/factory/yolo26s_pose_factory.hpp:13,
+                 from /home/mskang/dx-demos/apps/yolo26/cpp/yolo26s_3/yolo26s_3.cpp:55:
+/home/mskang/dx-demos/apps/yolo26/cpp/yolo26s_3/../object_detection/yolo26s/common/processors/pose_postprocessor.hpp: In constructor ‘dxapp::YOLOv8PosePostprocessor::YOLOv8PosePostprocessor(int, int, float, float, int, bool)’:
+/home/mskang/dx-demos/apps/yolo26/cpp/yolo26s_3/../object_detection/yolo26s/common/processors/pose_postprocessor.hpp:72:34: warning: unused parameter ‘is_ort_configured’ [-Wunused-parameter]
+   72 |                             bool is_ort_configured = false)
+      |                             ~~~~~^~~~~~~~~~~~~~~~~~~~~~~~~
+In file included from /home/mskang/dx-demos/apps/yolo26/cpp/yolo26s_3/../instance_segmentation/yolo26s_seg/factory/yolo26s_seg_factory.hpp:11,
+                 from /home/mskang/dx-demos/apps/yolo26/cpp/yolo26s_3/yolo26s_3.cpp:56:
+/home/mskang/dx-demos/apps/yolo26/cpp/yolo26s_3/../object_detection/yolo26s/common/processors/segmentation_postprocessor.hpp: In member function ‘virtual std::vector<dxapp::SegmentationResult, std::allocator<dxapp::SegmentationResult> > dxapp::DeepLabv3Postprocessor::process(const TensorPtrs&, const dxapp::PreprocessContext&)’:
+/home/mskang/dx-demos/apps/yolo26/cpp/yolo26s_3/../object_detection/yolo26s/common/processors/segmentation_postprocessor.hpp:36:70: warning: unused parameter ‘ctx’ [-Wunused-parameter]
+   36 |                                             const PreprocessContext& ctx) override {
+      |                                             ~~~~~~~~~~~~~~~~~~~~~~~~~^~~
+/home/mskang/dx-demos/apps/yolo26/cpp/yolo26s_3/../object_detection/yolo26s/common/processors/segmentation_postprocessor.hpp: In static member function ‘static void dxapp::DeepLabv3Postprocessor::fillMaskInt64(const int64_t*, int, int, int, std::vector<int>&, std::set<int>&)’:
+/home/mskang/dx-demos/apps/yolo26/cpp/yolo26s_3/../object_detection/yolo26s/common/processors/segmentation_postprocessor.hpp:129:56: warning: unused parameter ‘C’ [-Wunused-parameter]
+  129 |     static void fillMaskInt64(const int64_t* data, int C, int H, int W,
+      |                                                    ~~~~^
+/home/mskang/dx-demos/apps/yolo26/cpp/yolo26s_3/../object_detection/yolo26s/common/processors/segmentation_postprocessor.hpp: In constructor ‘dxapp::YOLOv5SegPostprocessor::YOLOv5SegPostprocessor(int, int, float, float, float, int, int, bool)’:
+/home/mskang/dx-demos/apps/yolo26/cpp/yolo26s_3/../object_detection/yolo26s/common/processors/segmentation_postprocessor.hpp:286:33: warning: unused parameter ‘is_ort_configured’ [-Wunused-parameter]
+  286 |                            bool is_ort_configured = false)
+      |                            ~~~~~^~~~~~~~~~~~~~~~~~~~~~~~~
+/home/mskang/dx-demos/apps/yolo26/cpp/yolo26s_3/yolo26s_3.cpp: In member function ‘void {anonymous}::ResultWorker<ResultT, FactoryT>::run()’:
+/home/mskang/dx-demos/apps/yolo26/cpp/yolo26s_3/yolo26s_3.cpp:1165:12: error: ‘class dxrt::InferenceOption’ has no member named ‘bufferCount’
+ 1165 |         io.bufferCount = max_inflight_;
+      |            ^~~~~~~~~~~
+In file included from /home/mskang/dx-demos/apps/yolo26/cpp/yolo26s_3/yolo26s_3.cpp:50:
+/home/mskang/dx-demos/apps/yolo26/cpp/yolo26s_3/../object_detection/yolo26s/common/utility/common_util.hpp: At global scope:
+/home/mskang/dx-demos/apps/yolo26/cpp/yolo26s_3/../object_detection/yolo26s/common/utility/common_util.hpp:227:27: warning: inline function ‘std::atomic<bool>& dxapp::g_interrupted()’ used but never defined
+  227 | inline std::atomic<bool>& g_interrupted();
+      |                           ^~~~~~~~~~~~~
+make[2]: *** [CMakeFiles/yolo26s_3.dir/build.make:76: CMakeFiles/yolo26s_3.dir/yolo26s_3.cpp.o] Error 1
+make[1]: *** [CMakeFiles/Makefile2:83: CMakeFiles/yolo26s_3.dir/all] Error 2
+make: *** [Makefile:91: all] Error 2
+FAILED: apps/yolo26/cpp/yolo26s_3/build.sh
+
+========================================
+Building: apps/yolo26/cpp/yolo26s_all/build.sh
+========================================
+-- Configuring done (0.0s)
+-- Generating done (0.0s)
+-- Build files have been written to: /home/mskang/dx-demos/apps/yolo26/cpp/yolo26s_all/build
+[100%] Built target yolo26s_all
+
+========================================
+Building: apps/yolo-multi/cpp/build.sh
+========================================
+-- Configuring done (0.1s)
+-- Generating done (0.0s)
+-- Build files have been written to: /home/mskang/dx-demos/apps/yolo-multi/cpp/build
+[100%] Built target yolo_multi_demo
+
+========================================
+Build summary (5/12 succeeded)
+========================================
+  OK   apps/automotive/cpp/pidnet/build.sh
+  OK   apps/depth/cpp/build.sh
+  OK   apps/drone/cpp/build.sh
+  OK   apps/yolo26/cpp/yolo26s_all/build.sh
+  OK   apps/yolo-multi/cpp/build.sh
+  FAIL apps/automotive/cpp/sfa3d/build.sh
+  FAIL apps/automotive/cpp/yolopv2/build.sh
+  FAIL apps/clip-single/cpp/build.sh
+  FAIL apps/hand-landmark/cpp/build.sh
+  FAIL apps/paddle-ocr/cpp/build.sh
+  FAIL apps/robotics/cpp/build.sh
+  FAIL apps/yolo26/cpp/yolo26s_3/build.sh

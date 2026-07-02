@@ -516,13 +516,13 @@ public:
     explicit ImageEncoderAsync(const std::string& model_path)
     {
         dxrt::InferenceOption option;
-        option.bufferCount = kMaxAsyncJobs;
+        // option.bufferCount = kMaxAsyncJobs;
         engine_ = std::make_unique<dxrt::InferenceEngine>(model_path, option);
-        const auto inputs = engine_->GetInputs();
+        auto inputs = engine_->GetInputs();
         if (inputs.empty() || inputs.front().type() != dxrt::DataType::FLOAT) {
             throw std::runtime_error("CLIP image encoder must have a FLOAT input");
         }
-        const std::vector<int64_t> shape = inputs.front().shape();
+        std::vector<int64_t> shape = inputs.front().shape();
         if (shape.size() != 4 || shape[1] != 3 || shape[2] != kImageSize ||
             shape[3] != kImageSize) {
             throw std::runtime_error("CLIP image encoder input must be [1,3,224,224]");

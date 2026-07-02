@@ -59,10 +59,10 @@ sudo apt install -y \
 | `build-essential`, `cmake`, `make` | C++ 빌드 도구 (CMake 3.14 이상 필요) |
 | `libopencv-dev` | OpenCV (대부분의 비전 데모) |
 | `qtbase5-dev` | Qt5 Widgets GUI (카메라·뷰어 데모) |
-| `libssl-dev` | OpenSSL (`robotics`, `encript`) |
+| `libssl-dev` | OpenSSL |
 | `zlib1g-dev` | ZLIB (`clip-single`) |
 | `libx11-dev` | X11 풀스크린 (`depth`, 선택 사항) |
-| `libgstreamer1.0-dev`, `libgstreamer-plugins-base1.0-dev` | GStreamer (`yolo-multi`, `robotics`) |
+| `libgstreamer1.0-dev`, `libgstreamer-plugins-base1.0-dev` | GStreamer (`yolo-multi`) |
 | `libv4l-dev`, `v4l-utils` | USB 카메라 입력 |
 | `libcurl4-openssl-dev`, `wget` | 모델·리소스 다운로드 스크립트 |
 

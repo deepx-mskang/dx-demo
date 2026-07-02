@@ -10,7 +10,7 @@ Usage: $(basename "$0") [--help]
 
 Remove C++ build artifacts under this repository:
   - build/ next to each demo build.sh
-  - bin/ install output (e.g. robotics, yolo-multi)
+  - bin/ install output (e.g. yolo-multi)
   - cmake-build-* IDE out-of-source directories
 
 Does not remove workspace/, .cache/, assets, or Python virtual environments.

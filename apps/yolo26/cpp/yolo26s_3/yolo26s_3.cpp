@@ -1162,7 +1162,7 @@ template <typename ResultT, typename FactoryT>
 void ResultWorker<ResultT, FactoryT>::run() {
     try {
         dxrt::InferenceOption io;
-        io.bufferCount = max_inflight_;
+        // io.bufferCount = max_inflight_;
         dxrt::InferenceEngine ie(model_path_, io);
         if (!dxapp::minversionforRTandCompiler(&ie)) {
             throw std::runtime_error(name_ + " model/runtime version mismatch: " + model_path_);

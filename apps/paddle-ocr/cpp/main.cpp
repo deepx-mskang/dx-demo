@@ -164,7 +164,7 @@ fs::path defaultRoot()
 
 fs::path defaultModelsBaseDir(const fs::path& root)
 {
-    return root / "../../assets/paddle-ocr";
+    return root / "../../../assets/paddle-ocr";
 }
 
 void notifyLauncherReady()
@@ -392,11 +392,6 @@ cv::Mat makeLeftDisplayImage(
     }
 
     return display;
-}
-
-fs::path defaultModelsBaseDir(const fs::path& root)
-{
-    return root / "../../../assets/paddle-ocr";
 }
 
 QString fontPathForLanguage(const fs::path& root)

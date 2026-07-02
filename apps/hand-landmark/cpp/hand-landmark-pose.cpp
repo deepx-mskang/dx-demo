@@ -1889,13 +1889,13 @@ cv::Mat center_crop_wide_frame_to_4_3(const cv::Mat& frame) {
 
 void validate_hand_model_shapes(dxrt::InferenceEngine& palm_engine,
                                 dxrt::InferenceEngine& landmark_engine) {
-    const auto palm_input = palm_engine.GetInputs().front();
+    auto palm_input = palm_engine.GetInputs().front();
     const auto palm_shape = palm_input.shape();
     if (palm_shape.size() != 4 || palm_shape[1] != kPalmHeight || palm_shape[2] != kPalmWidth ||
         palm_shape[3] != kPalmChannels || palm_input.type() != dxrt::DataType::UINT8) {
         throw std::runtime_error("palm model input must be UINT8 [1,192,192,3]");
     }
-    const auto lm_input = landmark_engine.GetInputs().front();
+    auto lm_input = landmark_engine.GetInputs().front();
     const auto lm_shape = lm_input.shape();
     if (lm_shape.size() != 4 || lm_shape[1] != kLandmarkHeight ||
         lm_shape[2] != kLandmarkWidth || lm_shape[3] != kLandmarkChannels ||
@@ -1907,7 +1907,7 @@ void validate_hand_model_shapes(dxrt::InferenceEngine& palm_engine,
 void validate_pose_model_shape(dxrt::InferenceEngine& pose_engine,
                                int* pose_input_width,
                                int* pose_input_height) {
-    const auto pose_input = pose_engine.GetInputs().front();
+    auto pose_input = pose_engine.GetInputs().front();
     int pose_channels = 0;
     parse_model_input_shape(pose_input.shape(), pose_input_width, pose_input_height,
                             &pose_channels);

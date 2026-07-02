@@ -1,0 +1,128 @@
+========================================
+Building C++ Projects
+========================================
+Found 12 build target(s).
+
+========================================
+Building: apps/automotive/cpp/pidnet/build.sh
+========================================
+-- Configuring done (0.0s)
+-- Generating done (0.0s)
+-- Build files have been written to: /home/mskang/dx-demos/apps/automotive/cpp/pidnet/build
+[ 75%] Built target pidnet_s_cityscapes_async
+[100%] Built target pidnet_s_cityscapes_sync
+
+========================================
+Building: apps/automotive/cpp/sfa3d/build.sh
+========================================
+-- Configuring done (0.0s)
+-- Generating done (0.0s)
+-- Build files have been written to: /home/mskang/dx-demos/apps/automotive/cpp/sfa3d/build
+[ 50%] Building CXX object CMakeFiles/sfa3d_async.dir/sfa/demo_dxnn_async.cpp.o
+[100%] Linking CXX executable sfa3d_async
+[100%] Built target sfa3d_async
+
+========================================
+Building: apps/automotive/cpp/yolopv2/build.sh
+========================================
+-- Configuring done (0.0s)
+-- Generating done (0.0s)
+-- Build files have been written to: /home/mskang/dx-demos/apps/automotive/cpp/yolopv2/build
+[ 50%] Building CXX object CMakeFiles/yolopv2_async.dir/demo_dxnn_qt5_async.cpp.o
+[100%] Linking CXX executable yolopv2_async
+[100%] Built target yolopv2_async
+
+========================================
+Building: apps/clip-single/cpp/build.sh
+========================================
+-- Configuring done (0.0s)
+-- Generating done (0.0s)
+-- Build files have been written to: /home/mskang/dx-demos/apps/clip-single/cpp/build
+[  0%] Built target camera_text_matcher_async_gui_cpp_autogen_timestamp_deps
+[ 16%] Built target camera_text_matcher_async_gui_cpp_autogen
+[100%] Built target camera_text_matcher_async_gui_cpp
+
+========================================
+Building: apps/depth/cpp/build.sh
+========================================
+-- Configuring done (0.1s)
+-- Generating done (0.0s)
+-- Build files have been written to: /home/mskang/dx-demos/apps/depth/cpp/build
+[100%] Built target depth-demo
+
+========================================
+Building: apps/drone/cpp/build.sh
+========================================
+-- Configuring done (0.0s)
+-- Generating done (0.0s)
+-- Build files have been written to: /home/mskang/dx-demos/apps/drone/cpp/build
+[100%] Built target drone_mixformer
+
+========================================
+Building: apps/hand-landmark/cpp/build.sh
+========================================
+-- Configuring done (0.0s)
+-- Generating done (0.0s)
+-- Build files have been written to: /home/mskang/dx-demos/apps/hand-landmark/cpp/build
+[ 33%] Built target hand-landmark
+[ 66%] Built target hand-landmark-detection
+[100%] Built target hand-landmark-pose
+
+========================================
+Building: apps/paddle-ocr/cpp/build.sh
+========================================
+-- Configuring done (0.0s)
+-- Generating done (0.0s)
+-- Build files have been written to: /home/mskang/dx-demos/apps/paddle-ocr/cpp/build
+[  0%] Built target cam_ppocr_v6_demo_autogen_timestamp_deps
+[ 16%] Built target cam_ppocr_v6_demo_autogen
+[100%] Built target cam_ppocr_v6_demo
+
+========================================
+Building: apps/robotics/cpp/build.sh
+========================================
+-- Configuring done (0.1s)
+-- Generating done (0.0s)
+-- Build files have been written to: /home/mskang/dx-demos/apps/robotics/cpp/build
+[ 18%] Built target dx_model_crypto
+[100%] Built target robotics_demo
+
+========================================
+Building: apps/yolo26/cpp/yolo26s_3/build.sh
+========================================
+-- Configuring done (0.0s)
+-- Generating done (0.0s)
+-- Build files have been written to: /home/mskang/dx-demos/apps/yolo26/cpp/yolo26s_3/build
+[100%] Built target yolo26s_3
+
+========================================
+Building: apps/yolo26/cpp/yolo26s_all/build.sh
+========================================
+-- Configuring done (0.0s)
+-- Generating done (0.0s)
+-- Build files have been written to: /home/mskang/dx-demos/apps/yolo26/cpp/yolo26s_all/build
+[100%] Built target yolo26s_all
+
+========================================
+Building: apps/yolo-multi/cpp/build.sh
+========================================
+-- Configuring done (0.1s)
+-- Generating done (0.0s)
+-- Build files have been written to: /home/mskang/dx-demos/apps/yolo-multi/cpp/build
+[100%] Built target yolo_multi_demo
+
+========================================
+Build summary (12/12 succeeded)
+========================================
+  OK   apps/automotive/cpp/pidnet/build.sh
+  OK   apps/automotive/cpp/sfa3d/build.sh
+  OK   apps/automotive/cpp/yolopv2/build.sh
+  OK   apps/clip-single/cpp/build.sh
+  OK   apps/depth/cpp/build.sh
+  OK   apps/drone/cpp/build.sh
+  OK   apps/hand-landmark/cpp/build.sh
+  OK   apps/paddle-ocr/cpp/build.sh
+  OK   apps/robotics/cpp/build.sh
+  OK   apps/yolo26/cpp/yolo26s_3/build.sh
+  OK   apps/yolo26/cpp/yolo26s_all/build.sh
+  OK   apps/yolo-multi/cpp/build.sh

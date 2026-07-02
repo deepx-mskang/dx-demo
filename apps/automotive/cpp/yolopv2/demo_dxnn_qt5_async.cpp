@@ -650,8 +650,15 @@ void print_shape(const std::vector<int64_t> &shape)
     std::cout << "]";
 }
 
-void print_tensors(const std::string &title, const dxrt::Tensors &tensors)
+void print_tensors(const std::string &title, dxrt::Tensors tensors)
 {
+    static bool printed = false;
+    if (printed)
+    {
+        return;
+    }
+    printed = true;
+
     std::cout << title << " count=" << tensors.size() << std::endl;
     for (std::size_t i = 0; i < tensors.size(); ++i)
     {
@@ -662,7 +669,7 @@ void print_tensors(const std::string &title, const dxrt::Tensors &tensors)
     }
 }
 
-void print_output_ptrs_once(const dxrt::TensorPtrs &outputs)
+void print_output_ptrs_once(dxrt::TensorPtrs outputs)
 {
     static bool printed = false;
     if (printed)
@@ -687,7 +694,7 @@ void print_output_ptrs_once(const dxrt::TensorPtrs &outputs)
 
 InputInfo analyze_input(dxrt::InferenceEngine &engine, int fallback_size)
 {
-    const dxrt::Tensors inputs = engine.GetInputs();
+    dxrt::Tensors inputs = engine.GetInputs();
     if (inputs.empty())
     {
         throw std::runtime_error("model has no input tensor");

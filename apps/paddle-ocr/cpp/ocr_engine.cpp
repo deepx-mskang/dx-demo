@@ -243,7 +243,7 @@ std::unique_ptr<dxrt::InferenceEngine> PaddleOcrEngine::loadEngine(const fs::pat
     dxrt::InferenceOption option;
     option.useORT = true;
     if (bufferCount > 0) {
-        option.bufferCount = bufferCount;
+        // option.bufferCount = bufferCount;
     }
     return std::make_unique<dxrt::InferenceEngine>(path.string(), option);
 }
