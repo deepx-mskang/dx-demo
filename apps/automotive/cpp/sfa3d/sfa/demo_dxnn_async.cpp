@@ -692,8 +692,8 @@ Config parseArgs(int argc, char* argv[]) {
         config.pretrained_path = fs::path(pretrained_path);
     }
 
-    config.dataset_dir = config.repo_root / "dataset" / "kitti" / "demo";
-    config.calib_path = config.repo_root / "dataset" / "kitti" / "demo" / "calib.txt";
+    config.dataset_dir = config.repo_root / "../../../../workspace/videos/automotive/dataset" / "kitti" / "demo";
+    config.calib_path = config.repo_root / "../../../../workspace/videos/automotive/dataset" / "kitti" / "demo" / "calib.txt";
 
     return config;
 }

@@ -397,9 +397,14 @@ cv::Mat makeLeftDisplayImage(
     return display;
 }
 
+fs::path defaultModelsBaseDir(const fs::path& root)
+{
+    return root / "../../../../assets/paddle-ocr";
+}
+
 QString fontPathForLanguage(const fs::path& root, const std::string& language)
 {
-    const fs::path defaultFontPath = root / "../../assets/paddle-ocr" / "NotoSansJP-VariableFont_wght.ttf";
+    const fs::path defaultFontPath = root / "../../../../assets/paddle-ocr" / "NotoSansJP-VariableFont_wght.ttf";
     if (fs::exists(defaultFontPath)) {
         return QString::fromStdString(defaultFontPath.string());
     }

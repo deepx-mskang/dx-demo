@@ -527,7 +527,7 @@ def main():
     args = parser.parse_args()
 
     # The dataset path is implicitly expected from the workspace layout
-    dataset_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../cpp/sfa3d/dataset/kitti/demo/2011_09_26_drive_0014_sync/2011_09_26/2011_09_26_drive_0014_sync'))
+    dataset_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../../../workspace/videos/automotive/dataset/kitti/demo/2011_09_26_drive_0014_sync/2011_09_26/2011_09_26_drive_0014_sync'))
     
     app_model = SFA3DApp(args.model, dataset_dir)
     
