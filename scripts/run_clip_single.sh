@@ -3,6 +3,11 @@
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 WORKSPACE="$(cd "$(dirname "$0")/../workspace" && pwd)"
 
+# Load top-level configuration
+if [ -f "${ROOT_DIR}/config.sh" ]; then
+    source "${ROOT_DIR}/config.sh"
+fi
+
 "$(dirname "$0")"/kill_clip.sh
 
 cd "${ROOT_DIR}"/apps/clip-single
@@ -24,7 +29,7 @@ if [ "$DX_BACKEND" == "python" ]; then
               --skip-frames 6 \
               --image-encoder "${WORKSPACE}/models/clip/ViT-L-14-quickgelu-dfn2b.dxnn" \
               --text-encoder "${WORKSPACE}/models/clip/ViT-L-14-quickgelu-dfn2b-text.onnx" \
-              --input "/dev/video0"
+              --input "${DX_CAMERA_DEV:-/dev/video0}"
         elif [ -n "$(find . -maxdepth 2 -name '*.py' -not -name '__init__.py' | head -n 1)" ]; then
             py_file=$(find . -maxdepth 2 -name '*.py' -not -name '__init__.py' | head -n 1)
             source "${ROOT_DIR}"/.venv/bin/activate && python "$py_file" \
@@ -37,7 +42,7 @@ if [ "$DX_BACKEND" == "python" ]; then
               --skip-frames 6 \
               --image-encoder "${WORKSPACE}/models/clip/ViT-L-14-quickgelu-dfn2b.dxnn" \
               --text-encoder "${WORKSPACE}/models/clip/ViT-L-14-quickgelu-dfn2b-text.onnx" \
-              --input "/dev/video0"
+              --input "${DX_CAMERA_DEV:-/dev/video0}"
         else
             echo "Error: Python backend not implemented for $(pwd)"
             read -t 3 -p "Press enter to exit..." || true
@@ -64,7 +69,7 @@ else
       --text-encoder "${WORKSPACE}/models/clip/ViT-L-14-quickgelu-dfn2b-text.onnx" \
       --bpe-vocab "../assets/bpe_simple_vocab_16e6.txt.gz" \
       --exit-btn \
-      --input "/dev/video0"
+      --input "${DX_CAMERA_DEV:-/dev/video0}"
 
 
 

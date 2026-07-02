@@ -3,6 +3,11 @@
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 WORKSPACE="$(cd "$(dirname "$0")/../workspace" && pwd)"
 
+# Load top-level configuration
+if [ -f "${ROOT_DIR}/config.sh" ]; then
+    source "${ROOT_DIR}/config.sh"
+fi
+
 "$(dirname "$0")"/kill_hands.sh
 
 cd "${ROOT_DIR}"/apps/hand-landmark
@@ -35,7 +40,7 @@ else
     	--palm-model "${WORKSPACE}/models/hands/hand-detector_192x192.dxnn" \
     	--landmark-model "${WORKSPACE}/models/hands/HandLandmarkLite.dxnn" \
     	--pose-model "${WORKSPACE}/models/hands/yolo26s-pose.dxnn" \
-    	-c 0 --width 1280 --height 720 --hide-palm --max-hands 10 --exit-btn
-    #./build/hand-landmark-pose -c 0 --width 1280 --height 720 --hide-palm --max-hands 10
+    	-c "${DX_CAMERA_IDX:-0}" --width 1280 --height 720 --hide-palm --max-hands 10 --exit-btn
+    #./build/hand-landmark-pose -c "${DX_CAMERA_IDX:-0}" --width 1280 --height 720 --hide-palm --max-hands 10
 
 fi

@@ -3,6 +3,11 @@
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 WORKSPACE="$(cd "$(dirname "$0")/../workspace" && pwd)"
 
+# Load top-level configuration
+if [ -f "${ROOT_DIR}/config.sh" ]; then
+    source "${ROOT_DIR}/config.sh"
+fi
+
 "$(dirname "$0")"/kill_ocr.sh
 
 cd "${ROOT_DIR}"/apps/paddle-ocr
@@ -35,6 +40,6 @@ if [ "$DX_BACKEND" == "python" ]; then
 else
     echo "Running C++ backend..."
     cd cpp
-    ./build/cam_ppocr_v6_demo --width 1280 --height 720 --fps 10 --exit-btn --enable-sharpness --camera 0
+    ./build/cam_ppocr_v6_demo --width 1280 --height 720 --fps 10 --exit-btn --enable-sharpness --camera "${DX_CAMERA_IDX:-0}"
 
 fi

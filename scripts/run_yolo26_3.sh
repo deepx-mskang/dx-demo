@@ -3,6 +3,11 @@
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 WORKSPACE="$(cd "$(dirname "$0")/../workspace" && pwd)"
 
+# Load top-level configuration
+if [ -f "${ROOT_DIR}/config.sh" ]; then
+    source "${ROOT_DIR}/config.sh"
+fi
+
 "$(dirname "$0")"/kill_yolo26.sh
 
 cd "${ROOT_DIR}"/apps/yolo26
@@ -18,14 +23,16 @@ if [ "$DX_BACKEND" == "python" ]; then
             	--model "${WORKSPACE}/models/common/yolo26s.dxnn" \
             	--model-pose "${WORKSPACE}/models/common/yolo26s-pose.dxnn" \
             	--model-seg "${WORKSPACE}/models/common/yolo26s-seg.dxnn" \
-            	--demo-image "${WORKSPACE}/assets/yolo26-demo.png"
+            	--demo-image "${WORKSPACE}/assets/yolo26-demo.png" \
+            	-v "${DX_CAMERA_IDX:-0}"
         elif [ -n "$(find . -maxdepth 2 -name '*.py' -not -name '__init__.py' | head -n 1)" ]; then
             py_file=$(find . -maxdepth 2 -name '*.py' -not -name '__init__.py' | head -n 1)
             source "${ROOT_DIR}"/.venv/bin/activate && python "$py_file" \
             	--model "${WORKSPACE}/models/common/yolo26s.dxnn" \
             	--model-pose "${WORKSPACE}/models/common/yolo26s-pose.dxnn" \
             	--model-seg "${WORKSPACE}/models/common/yolo26s-seg.dxnn" \
-            	--demo-image "${WORKSPACE}/assets/yolo26-demo.png"
+            	--demo-image "${WORKSPACE}/assets/yolo26-demo.png" \
+            	-v "${DX_CAMERA_IDX:-0}"
         else
             echo "Error: Python backend not implemented for $(pwd)"
             read -t 3 -p "Press enter to exit..." || true
@@ -44,7 +51,7 @@ else
     	--model-pose "${WORKSPACE}/models/common/yolo26s-pose.dxnn" \
     	--model-seg "${WORKSPACE}/models/common/yolo26s-seg.dxnn" \
     	--demo-image "${WORKSPACE}/assets/yolo26-demo.png" \
-    	--device "/dev/video0" \
+    	--device "${DX_CAMERA_DEV:-/dev/video0}" \
     	--exit-btn
 
 fi
