@@ -16,6 +16,11 @@ if [ ! -d "${WORKSPACE}/models" ] || [ ! -d "${WORKSPACE}/videos" ]; then
     "${ROOT_DIR}/setup_assets.sh"
 fi
 
+if [ ! -d "${WORKSPACE}/models/ocr/server" ] || [ ! -d "${WORKSPACE}/models/ocr/mobile" ]; then
+    echo "OCR models not found. Downloading..."
+    "${ROOT_DIR}/apps/paddle-ocr/python/setup.sh" --dest="${WORKSPACE}/models/ocr"
+fi
+
 cd "${ROOT_DIR}"/apps/paddle-ocr
 
 

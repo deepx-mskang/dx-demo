@@ -70,9 +70,9 @@ class OCRBenchmark:
             from engine.paddleocr import AsyncPipelineOCR
             from dx_engine import InferenceEngine as IE
             
-            model_dir = 'engine/model_files/server'
+            model_dir = '../../workspace/models/ocr/server'
             if use_mobile:
-                model_dir = 'engine/model_files/mobile'
+                model_dir = '../../workspace/models/ocr/mobile'
             # Load detection models
             if not use_mobile:            
                 det_640 = IE(f'{model_dir}/det_v5_640.dxnn')

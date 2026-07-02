@@ -263,7 +263,7 @@ fs::path PaddleOcrEngine::resolveModelDir(const std::string& profile) const
     throw std::runtime_error(
         "OCR model files were not found for profile '" + profile +
         "'. Expected models under " + modelsAssetsDir(profile).string() +
-        " or engine/model_files/" + profile + ".");
+        " or ../../workspace/models/ocr/" + profile + ".");
 }
 
 fs::path PaddleOcrEngine::resolveDictPath() const

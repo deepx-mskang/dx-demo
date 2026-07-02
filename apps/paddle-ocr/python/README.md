@@ -112,7 +112,7 @@ cd dx_baidu_gui
 - Ready-to-use benchmark reports in `output_async/`
 
 **Model Auto-Setup:**
-- Automatically checks for `engine/model_files/dxnn_optimized` and `dxnn_mobile_optimized`
+- Automatically checks for `../../workspace/models/ocr/dxnn_optimized` and `dxnn_mobile_optimized`
 - Runs `setup.sh` automatically if models are missing
 - No manual model download required
 

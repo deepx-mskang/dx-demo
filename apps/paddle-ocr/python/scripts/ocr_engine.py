@@ -73,9 +73,9 @@ def create_ocr_models(use_doc_preprocessing=True, use_mobile=False):
             - cls_model: Classification model  
             - rec_models: Dictionary of recognition models
     """
-    dir_name = "engine/model_files/server"
+    dir_name = "../../workspace/models/ocr/server"
     if use_mobile:
-        dir_name = "engine/model_files/mobile"
+        dir_name = "../../workspace/models/ocr/mobile"
     det_model_path = dir_name
     cls_model_path = f"{dir_name}/textline_ori.dxnn"  # 기존 DXNN 모델 (주석 처리)
     rec_model_dirname = dir_name

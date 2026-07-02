@@ -46,8 +46,8 @@ sharpening strength:
 
 The executable uses `--model mobile` by default. Model files are resolved from:
 
-1. `../engine/model_files/mobile` or `../.temp/mobile`
-2. `../engine/model_files/server` or `../.temp/server` when `--model server` is set
+1. `../../../workspace/models/ocr/mobile` or `../.temp/mobile`
+2. `../../../workspace/models/ocr/server` or `../.temp/server` when `--model server` is set
 
 `--model hybrid` uses the mobile detection/classification models and the server
 recognition models.

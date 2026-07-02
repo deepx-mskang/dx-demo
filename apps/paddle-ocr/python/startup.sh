@@ -243,7 +243,7 @@ if [[ $NEED_SETUP -eq 1 ]]; then
             exit 1
         fi
     else
-        log "ERROR: setup.sh not found. Please provide DXNN models manually under engine/model_files/"
+        log "ERROR: setup.sh not found. Please provide DXNN models manually under ../../workspace/models/ocr/"
         exit 1
     fi
 else
