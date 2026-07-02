@@ -132,6 +132,25 @@ workspace/
 
 ---
 
+## Camera Configuration (카메라 설정)
+
+All camera-based demos (Python, C++, and JSON-configured apps) are centralized through the `config.sh` file located at the root of the repository.
+
+If you are using a camera other than `/dev/video0` (e.g., `/dev/video1` or a USB webcam), simply update the `DX_CAMERA_IDX` in the `config.sh` file:
+
+```bash
+# dx-demos/config.sh
+export DX_CAMERA_IDX="1"  # Change this to your target camera index
+export DX_CAMERA_DEV="/dev/video${DX_CAMERA_IDX}"
+```
+
+- **`DX_CAMERA_IDX`**: Used primarily by Python/OpenCV backends (e.g., `0`, `1`).
+- **`DX_CAMERA_DEV`**: Used by C++/V4L2/GStreamer backends (e.g., `/dev/video0`). It is automatically constructed from `DX_CAMERA_IDX`, so you typically **only need to change `DX_CAMERA_IDX`**.
+
+By changing this one file, all launcher scripts and demos will automatically use the specified camera device without any need to recompile the C++ code or modify Python scripts.
+
+---
+
 ## 빌드
 
 각 C++ 데모 디렉터리에서 `build.sh`를 실행합니다.
