@@ -106,7 +106,7 @@ cmake .. -DCMAKE_BUILD_TYPE=Release \
 
 ## 데모 에셋
 
-`.dxnn` 모델과 테스트 비디오는 용량이 커서 git에 포함되지 않습니다. 저장소 루트에서 `setup_assets.sh`를 실행하면 [demo_assets.tar.gz](https://cs.deepx.ai/demo/demo_assets.tar.gz)를 내려받아 `workspace/`에 압축을 풉니다.
+`.dxnn` 모델과 테스트 비디오는 용량이 커서 git에 포함되지 않습니다. 저장소 루트에서 `setup_assets.sh`를 실행하면 [demo_assets.tar.gz](https://cs.deepx.ai/_deepx_fae_archive/demo_assets.tar.gz)를 내려받아 `workspace/`에 압축을 풉니다.
 
 ```bash
 ./setup_assets.sh
@@ -124,7 +124,7 @@ workspace/
 |------------------|------|
 | `--force` | 기존 `workspace/`가 있어도 다시 다운로드·압축 해제 |
 | `--help` | 사용법 출력 |
-| `DX_DEMOS_ASSETS_URL` | 다운로드 URL 변경 (기본: `https://cs.deepx.ai/demo/demo_assets.tar.gz`) |
+| `DX_DEMOS_ASSETS_URL` | 다운로드 URL 변경 (기본: `https://cs.deepx.ai/_deepx_fae_archive/demo_assets.tar.gz`) |
 
 `workspace/`가 이미 있으면 스크립트는 건너뜁니다. 다운로드 파일은 `.cache/demo_assets.tar.gz`에 캐시됩니다. `curl` 또는 `wget`이 필요합니다.
 

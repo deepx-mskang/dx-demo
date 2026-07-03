@@ -3,7 +3,7 @@ set -e
 
 REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
 WORKSPACE_DIR="$REPO_ROOT/workspace"
-ASSETS_URL="${DX_DEMOS_ASSETS_URL:-https://cs.deepx.ai/demo/demo_assets.tar.gz}"
+ASSETS_URL="${DX_DEMOS_ASSETS_URL:-https://cs.deepx.ai/_deepx_fae_archive/demo_assets.tar.gz}"
 CACHE_DIR="$REPO_ROOT/.cache"
 TAR_FILE="$CACHE_DIR/demo_assets.tar.gz"
 
