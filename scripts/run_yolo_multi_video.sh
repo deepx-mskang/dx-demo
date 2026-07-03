@@ -1,5 +1,6 @@
 #!/bin/bash
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+WORKSPACE="$(cd "$(dirname "$0")/../workspace" && pwd)"
 
 "$(dirname "$0")"/kill_yolo_multi.sh
 

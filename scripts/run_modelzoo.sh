@@ -1,5 +1,6 @@
 #!/bin/bash
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+WORKSPACE="$(cd "$(dirname "$0")/../workspace" && pwd)"
 
 # Auto-download missing workspace assets
 if [ ! -d "${WORKSPACE}/models" ] || [ ! -d "${WORKSPACE}/videos" ]; then

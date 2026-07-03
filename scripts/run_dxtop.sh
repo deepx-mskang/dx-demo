@@ -1,5 +1,6 @@
 #!/bin/bash
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+WORKSPACE="$(cd "$(dirname "$0")/../workspace" && pwd)"
 
 if [ "$DX_BACKEND" == "cpp" ]; then
     echo "Launching C++ dxtop in a new terminal window..."

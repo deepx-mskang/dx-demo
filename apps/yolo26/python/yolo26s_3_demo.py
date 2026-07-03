@@ -483,6 +483,8 @@ class VideoThread(QThread):
         
     def run(self):
         source = 0 if self.options.video == "" else self.options.video
+        if isinstance(source, str) and source.isdigit():
+            source = int(source)
         cap = cv2.VideoCapture(source)
         if not cap.isOpened():
             print("Failed to open video source")
