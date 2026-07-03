@@ -428,7 +428,7 @@ class CameraThread(QThread):
         if not cap.isOpened():
             print(f"Input {self.input_source} not available, using test image")
             use_test_image = True
-            test_image = cv2.imread('../../assets/clip-single/img-encoder-sample-1.png')
+            test_image = cv2.imread('../../workspace/assets/clip-single/img-encoder-sample-1.png')
             if test_image is None:
                 self.frame_ready.emit(None)
                 return

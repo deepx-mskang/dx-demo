@@ -92,7 +92,7 @@ struct AppArgs {
     std::string model = projectPath("../../workspace/models/common/yolo26s.dxnn");
     std::string model_pose = projectPath("../../workspace/models/common/yolo26s-pose.dxnn");
     std::string model_seg = projectPath("../../workspace/models/common/yolo26s-seg.dxnn");
-    std::string demo_image = projectPath("../../assets/yolo26/yolo26-demo.png");
+    std::string demo_image = projectPath("../../workspace/assets/yolo26/yolo26-demo.png");
     std::string video;
     bool no_loop_video = false;
     std::string device = "/dev/video0";

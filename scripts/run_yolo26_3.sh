@@ -29,7 +29,7 @@ if [ "$DX_BACKEND" == "python" ]; then
             	--model "${WORKSPACE}/models/common/yolo26s.dxnn" \
             	--model-pose "${WORKSPACE}/models/common/yolo26s-pose.dxnn" \
             	--model-seg "${WORKSPACE}/models/common/yolo26s-seg.dxnn" \
-            	--demo-image "${ROOT_DIR}/assets/yolo26/yolo26-demo.png" \
+            	--demo-image "${ROOT_DIR}/workspace/assets/yolo26/yolo26-demo.png" \
             	-v "${DX_CAMERA_IDX:-0}"
         elif [ -n "$(find . -maxdepth 2 -name '*.py' -not -name '__init__.py' | head -n 1)" ]; then
             py_file=$(find . -maxdepth 2 -name '*.py' -not -name '__init__.py' | head -n 1)
@@ -37,7 +37,7 @@ if [ "$DX_BACKEND" == "python" ]; then
             	--model "${WORKSPACE}/models/common/yolo26s.dxnn" \
             	--model-pose "${WORKSPACE}/models/common/yolo26s-pose.dxnn" \
             	--model-seg "${WORKSPACE}/models/common/yolo26s-seg.dxnn" \
-            	--demo-image "${ROOT_DIR}/assets/yolo26/yolo26-demo.png" \
+            	--demo-image "${ROOT_DIR}/workspace/assets/yolo26/yolo26-demo.png" \
             	-v "${DX_CAMERA_IDX:-0}"
         else
             echo "Error: Python backend not implemented for $(pwd)"
@@ -56,7 +56,7 @@ else
     	--model "${WORKSPACE}/models/common/yolo26s.dxnn" \
     	--model-pose "${WORKSPACE}/models/common/yolo26s-pose.dxnn" \
     	--model-seg "${WORKSPACE}/models/common/yolo26s-seg.dxnn" \
-    	--demo-image "${ROOT_DIR}/assets/yolo26/yolo26-demo.png" \
+    	--demo-image "${ROOT_DIR}/workspace/assets/yolo26/yolo26-demo.png" \
     	--device "${DX_CAMERA_DEV:-/dev/video0}" \
     	--exit-btn
 

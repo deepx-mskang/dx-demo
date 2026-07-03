@@ -74,9 +74,9 @@ ObjectDetection::ObjectDetection(std::shared_ptr<dxrt::InferenceEngine> ie, int 
 : _ie(ie), _profiler(dxrt::Profiler::GetInstance()), _channel(channel+1), _destWidth(destWidth), _destHeight(destHeight), _posX(posX), _posY(posY)
 {
     _name = "app" + std::to_string(_channel);
-    if(dxdemo::common::pathValidation("../../assets/yolo-multi/sample/dx_colored_log.png"))
+    if(dxdemo::common::pathValidation("../../workspace/assets/yolo-multi/sample/dx_colored_log.png"))
     {
-        _logo = cv::imread("../../assets/yolo-multi/sample/dx_colored_log.png", cv::IMREAD_COLOR);
+        _logo = cv::imread("../../workspace/assets/yolo-multi/sample/dx_colored_log.png", cv::IMREAD_COLOR);
         cv::resize(_logo, _resultFrame, cv::Size(_destWidth, _destHeight), 0, 0, cv::INTER_LINEAR);
     }
     else

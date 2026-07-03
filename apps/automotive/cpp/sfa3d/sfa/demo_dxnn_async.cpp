@@ -2047,7 +2047,7 @@ private:
     void showInfoDialog() {
         if (info_dialog_ == nullptr) {
             const fs::path image_path =
-                config_.repo_root / "../../../../assets/sfa3d" / ("sfa3d-" + config_.language + ".png");
+                config_.repo_root / "../../../../workspace/assets/sfa3d" / ("sfa3d-" + config_.language + ".png");
             info_dialog_ = new Sfa3dInfoDialog(image_path, this);
         }
 

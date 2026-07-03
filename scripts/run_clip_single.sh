@@ -73,7 +73,7 @@ else
       --full_screen \
       --image-encoder "${WORKSPACE}/models/clip/ViT-L-14-quickgelu-dfn2b.dxnn" \
       --text-encoder "${WORKSPACE}/models/clip/ViT-L-14-quickgelu-dfn2b-text.onnx" \
-      --bpe-vocab "${ROOT_DIR}/assets/clip-single/bpe_simple_vocab_16e6.txt.gz" \
+      --bpe-vocab "${ROOT_DIR}/workspace/assets/clip-single/bpe_simple_vocab_16e6.txt.gz" \
       --exit-btn \
       --input "${DX_CAMERA_DEV:-/dev/video0}"
 

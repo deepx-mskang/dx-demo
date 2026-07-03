@@ -73,7 +73,7 @@ constexpr float kHighlightMaxScore = 0.35F;
 struct AppOptions {
     std::string text_encoder = "onnx/ViT-L-14-quickgelu-dfn2b-text.onnx";
     std::string image_encoder = "dxnn/ViT-L-14-quickgelu-dfn2b.dxnn";
-    std::string bpe_vocab = "../../assets/clip-single/bpe_simple_vocab_16e6.txt.gz";
+    std::string bpe_vocab = "../../workspace/assets/clip-single/bpe_simple_vocab_16e6.txt.gz";
     std::string model_name;
     std::vector<QString> texts;
     std::string input;
@@ -377,7 +377,7 @@ protected:
 
         cv::Mat fallback;
         if (!opened) {
-            const fs::path fallback_path = resolvePath("../../assets/clip-single/img-encoder-sample-1.png");
+            const fs::path fallback_path = resolvePath("../../workspace/assets/clip-single/img-encoder-sample-1.png");
             fallback = cv::imread(fallback_path.string());
             if (fallback.empty()) {
                 emit captureError(QString("Input %1 is unavailable and the fallback image is missing")
