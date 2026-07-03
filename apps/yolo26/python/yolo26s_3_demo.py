@@ -485,12 +485,7 @@ class VideoThread(QThread):
         source = 0 if self.options.video == "" else self.options.video
         if isinstance(source, str) and source.isdigit():
             source = int(source)
-            
         cap = cv2.VideoCapture(source)
-        if isinstance(source, int) or (isinstance(source, str) and source.startswith("/dev/video")):
-            cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*'MJPG'))
-            cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
             
         if not cap.isOpened():
             print("Failed to open video source")
