@@ -1553,7 +1553,7 @@ if __name__ == "__main__":
  
     print("PP-OCRv6 selected. Detection and recognition only.")
     print("v6 detection model: det_v6_m_640.dxnn")
-    base_model_dirname = "../../assets/paddle-ocr"
+    base_model_dirname = "../../workspace/models/ocr/v6"
     det_model_dirname = base_model_dirname
     rec_model_dirname = base_model_dirname
 

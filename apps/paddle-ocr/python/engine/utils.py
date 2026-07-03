@@ -308,7 +308,7 @@ def infer_args():
     )
     parser.add_argument("--use_space_char", type=str2bool, default=True)
     parser.add_argument(
-        "--vis_font_path", type=str, default=str(module_dir / "../../../assets/paddle-ocr/fonts/NotoSansJP-VariableFont_wght.ttf")
+        "--vis_font_path", type=str, default=str(module_dir / "../../../workspace/models/ocr/v6/fonts/NotoSansJP-VariableFont_wght.ttf")
     )
     parser.add_argument("--drop_score", type=float, default=0.5)
 

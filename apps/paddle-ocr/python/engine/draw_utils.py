@@ -392,7 +392,7 @@ def poly2bbox(poly):
 def make_right_display_image(image, bboxes, texts, font_path=None, use_precise_transform=True):
     # If we only need the right display (white background with text), create it directly
     if font_path is None:
-        font_path = os.path.join(module_dir, "../../../assets/paddle-ocr/fonts/NotoSansCJK-Regular.ttc")
+        font_path = os.path.join(module_dir, "../../../workspace/models/ocr/v6/fonts/NotoSansCJK-Regular.ttc")
 
     if isinstance(image, np.ndarray):
         img_pil = Image.fromarray(image.astype(np.uint8))
@@ -441,7 +441,7 @@ def make_left_display_image(image, bbox_text_poly_shape_quadruplets, use_precise
 
 def draw_with_poly_enhanced(image, bbox_text_poly_shape_quadruplets, font_path=None, use_precise_transform=True):
     if font_path is None:
-        font_path = os.path.join(module_dir, "../../../assets/paddle-ocr/fonts/NotoSansCJK-Regular.ttc")
+        font_path = os.path.join(module_dir, "../../../workspace/models/ocr/v6/fonts/NotoSansCJK-Regular.ttc")
     
     if isinstance(image, np.ndarray):
         image_rgb = image
@@ -543,7 +543,7 @@ def text_visual(
     img_h=400,
     img_w=600,
     threshold=0.0,
-    font_path=str(module_dir / "../../../assets/paddle-ocr/fonts/NotoSansJP-VariableFont_wght.ttf"),
+    font_path=str(module_dir / "../../../workspace/models/ocr/v6/fonts/NotoSansJP-VariableFont_wght.ttf"),
 ):
     """
     create new blank img and draw txt on it
@@ -627,7 +627,7 @@ def draw_ocr(
     txts=None,
     scores=None,
     drop_score=0.5,
-    font_path=str(module_dir / "../../../assets/paddle-ocr/fonts/NotoSansJP-VariableFont_wght.ttf"),
+    font_path=str(module_dir / "../../../workspace/models/ocr/v6/fonts/NotoSansJP-VariableFont_wght.ttf"),
 ):
     """
     Visualize the results of OCR detection and recognition
