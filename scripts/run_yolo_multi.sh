@@ -17,7 +17,7 @@ if [ -f "${ROOT_DIR}/config.sh" ]; then
 fi
 
 # Prepare a temporary config with the correct camera device
-CONFIG_FILE="../config/ppu_yolo_multi_demo_36.json"
+CONFIG_FILE="config/ppu_yolo_multi_demo_36.json"
 TMP_CONFIG="/tmp/ppu_yolo_multi_demo_36_$$.json"
 cp "$CONFIG_FILE" "$TMP_CONFIG"
 sed -i "s|/dev/video0|${DX_CAMERA_DEV:-/dev/video0}|g" "$TMP_CONFIG"
