@@ -4,6 +4,8 @@
 
 #include <QApplication>
 #include <QCoreApplication>
+#include <QFont>
+#include <QFontMetrics>
 #include <QImage>
 #include <QKeyEvent>
 #include <QMouseEvent>
@@ -39,6 +41,13 @@ constexpr int kDefaultUpdateInterval = 200;
 constexpr float kTemplateUpdateThreshold = 0.5f;
 constexpr float kMaxScoreDecay = 1.0f;
 constexpr float kClipMargin = 10.0f;
+constexpr std::array<float, 3> kImageMean = {0.485f, 0.456f, 0.406f};
+constexpr std::array<float, 3> kImageStd = {0.229f, 0.224f, 0.225f};
+constexpr float kMinTrackingScore = 0.15f;
+constexpr float kMaxFrameScaleChange = 1.20f;
+constexpr float kMaxCenterShiftFactor = 0.75f;
+constexpr float kMinCenterShiftPixels = 12.0f;
+constexpr float kGoodTrackingScore = 0.5f;
 constexpr int kExitButtonWidth = 32;
 constexpr int kExitButtonHeight = 28;
 constexpr int kExitButtonMargin = 14;
@@ -65,9 +74,18 @@ struct AppOptions {
     std::string backend_name = "onnx";
     std::string model_path = "mixformer_sim.onnx";
     std::string video_path = "video1.mp4";
+    bool use_camera = false;
+    int camera_index = 0;
+    int camera_width = 0;
+    int camera_height = 0;
+    int camera_fps = 0;
+    int camera_buffer_size = 0;
+    std::string camera_fourcc;
     bool full_screen = false;
     bool show_exit_button = false;
     bool loop = false;
+    bool debug = false;
+    float min_track_score = kMinTrackingScore;
 };
 
 struct TensorOutput {
@@ -124,11 +142,42 @@ float sigmoid(float x)
     return z / (1.0f + z);
 }
 
+int fourcc_from_string(const std::string& code)
+{
+    return cv::VideoWriter::fourcc(code[0], code[1], code[2], code[3]);
+}
+
+std::string fourcc_text(int fourcc)
+{
+    std::string text(4, ' ');
+    for (int i = 0; i < 4; ++i) {
+        const unsigned char ch = static_cast<unsigned char>((fourcc >> (8 * i)) & 0xff);
+        text[static_cast<std::size_t>(i)] = std::isprint(ch) ? static_cast<char>(ch) : '?';
+    }
+    return text;
+}
+
 void print_usage(const char* argv0)
 {
     std::cout
-        << "Usage: " << argv0 << " [--backend onnx|dxnn] --model <PATH> --video <PATH> [--full_screen]\n"
-        << "                 [--exit-btn] [--loop]\n"
+        << "Usage: " << argv0 << " --model <PATH> [OPTIONS]\n"
+        << "      --backend onnx|dxnn     Inference backend (default: onnx)\n"
+        << "      --model <PATH>          Path to model file (required)\n"
+        << "      --video <PATH>          Video file input path\n"
+        << "      --camera [INDEX]        Use camera input (default index: 0)\n"
+        << "      --width <N>             Camera width; requires --camera\n"
+        << "      --height <N>            Camera height; requires --camera\n"
+        << "      --fps <N>               Camera FPS request; requires --camera\n"
+        << "      --camera-buffer-size <N>\n"
+        << "                              Set OpenCV camera buffer size when N > 0\n"
+        << "      --camera-fourcc CODE    Request camera pixel format, e.g. MJPG or YUYV\n"
+        << "      --full_screen           Show the GUI in fullscreen mode\n"
+        << "      --exit-btn              Show a clickable exit button at the top-right\n"
+        << "      --loop                  Loop video input\n"
+        << "      --min-track-score <F>   Reject predictions below this score, 0..1\n"
+        << "                              (default: " << kMinTrackingScore << ")\n"
+        << "      --debug                 Print tracking anomaly logs\n"
+        << "  -h, --help                  Show this help\n"
         << "\n"
         << "Example:\n"
         << "  " << argv0 << " --backend dxnn --model assets/mixformer_sim.dxnn --video assets/drone_test.mp4\n";
@@ -143,9 +192,45 @@ std::string require_arg_value(int& index, int argc, char** argv)
     return argv[index];
 }
 
+float require_float_arg(int& index, int argc, char** argv)
+{
+    const std::string name = argv[index];
+    const std::string value = require_arg_value(index, argc, argv);
+    std::size_t parsed = 0;
+    float result = 0.0f;
+    try {
+        result = std::stof(value, &parsed);
+    } catch (const std::exception&) {
+        throw std::runtime_error("invalid numeric value for " + name + ": " + value);
+    }
+    if (parsed != value.size() || !std::isfinite(result)) {
+        throw std::runtime_error("invalid numeric value for " + name + ": " + value);
+    }
+    return result;
+}
+
+int require_int_arg(int& index, int argc, char** argv)
+{
+    const std::string name = argv[index];
+    const std::string value = require_arg_value(index, argc, argv);
+    std::size_t parsed = 0;
+    int result = 0;
+    try {
+        result = std::stoi(value, &parsed);
+    } catch (const std::exception&) {
+        throw std::runtime_error("invalid integer value for " + name + ": " + value);
+    }
+    if (parsed != value.size()) {
+        throw std::runtime_error("invalid integer value for " + name + ": " + value);
+    }
+    return result;
+}
+
 AppOptions parse_args(int argc, char** argv)
 {
     AppOptions options;
+    bool video_requested = false;
+    bool camera_requested = false;
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
         if (arg == "--help" || arg == "-h") {
@@ -165,15 +250,59 @@ AppOptions parse_args(int argc, char** argv)
             options.model_path = require_arg_value(i, argc, argv);
         } else if (arg == "--video") {
             options.video_path = require_arg_value(i, argc, argv);
+            video_requested = true;
+        } else if (arg == "--camera") {
+            options.use_camera = true;
+            camera_requested = true;
+            if (i + 1 < argc && argv[i + 1][0] != '-') {
+                options.camera_index = require_int_arg(i, argc, argv);
+            }
+        } else if (arg == "--width") {
+            options.camera_width = require_int_arg(i, argc, argv);
+        } else if (arg == "--height") {
+            options.camera_height = require_int_arg(i, argc, argv);
+        } else if (arg == "--fps") {
+            options.camera_fps = require_int_arg(i, argc, argv);
+        } else if (arg == "--camera-buffer-size") {
+            options.camera_buffer_size = require_int_arg(i, argc, argv);
+        } else if (arg == "--camera-fourcc") {
+            options.camera_fourcc = require_arg_value(i, argc, argv);
         } else if (arg == "--full_screen") {
             options.full_screen = true;
         } else if (arg == "--exit-btn") {
             options.show_exit_button = true;
         } else if (arg == "--loop") {
             options.loop = true;
+        } else if (arg == "--min-track-score") {
+            options.min_track_score = require_float_arg(i, argc, argv);
+        } else if (arg == "--debug") {
+            options.debug = true;
         } else {
             throw std::runtime_error("unknown argument: " + arg);
         }
+    }
+
+    if (video_requested && camera_requested) {
+        throw std::runtime_error("--video and --camera cannot be used together");
+    }
+    if (options.camera_index < 0) {
+        throw std::runtime_error("camera index must be non-negative");
+    }
+    if (!options.use_camera &&
+        (options.camera_width > 0 || options.camera_height > 0 || options.camera_fps > 0 ||
+         options.camera_buffer_size > 0 || !options.camera_fourcc.empty())) {
+        throw std::runtime_error("camera options require --camera");
+    }
+    if (options.camera_width < 0 || options.camera_height < 0 ||
+        options.camera_fps < 0 || options.camera_buffer_size < 0) {
+        throw std::runtime_error("camera width, height, fps and buffer size must be non-negative");
+    }
+    if (!options.camera_fourcc.empty() && options.camera_fourcc.size() != 4) {
+        throw std::runtime_error("--camera-fourcc expects a 4-character code: " +
+                                 options.camera_fourcc);
+    }
+    if (!(options.min_track_score >= 0.0f) || options.min_track_score > 1.0f) {
+        throw std::runtime_error("--min-track-score must be within 0..1");
     }
     return options;
 }
@@ -200,8 +329,13 @@ cv::Rect2f normalized_rect(const cv::Point2f& a, const cv::Point2f& b)
 
 class MixFormerV2Tracker {
 public:
-    MixFormerV2Tracker(const std::string& model_path, Backend backend)
+    MixFormerV2Tracker(const std::string& model_path,
+                       Backend backend,
+                       float min_track_score,
+                       bool debug)
         : backend_(backend),
+          min_track_score_(min_track_score),
+          debug_(debug),
           ort_env_(ORT_LOGGING_LEVEL_WARNING, "mixformer_v2")
     {
         if (backend_ == Backend::Onnx) {
@@ -209,6 +343,8 @@ public:
         } else {
             init_dxnn(model_path);
         }
+        std::cout << "[Info] Input normalization: ImageNet mean/std; min tracking score="
+                  << min_track_score_ << std::endl;
     }
 
     void init(const cv::Mat& image, const cv::Rect2f& init_bbox)
@@ -216,10 +352,23 @@ public:
         state_ = init_bbox;
         frame_id_ = 0;
         max_pred_score_ = -1.0f;
+        last_pred_score_ = -1.0f;
+        last_image_width_ = image.cols;
+        last_image_height_ = image.rows;
 
         template_tensor_ = sample_target(image, state_, kTemplateFactor, kTemplateSize).tensor;
         online_template_tensor_ = template_tensor_;
         online_max_template_tensor_ = template_tensor_;
+    }
+
+    float last_pred_score() const
+    {
+        return last_pred_score_;
+    }
+
+    float min_track_score() const
+    {
+        return min_track_score_;
     }
 
     cv::Rect update(const cv::Mat& image)
@@ -234,15 +383,22 @@ public:
             throw std::runtime_error("could not find Bounding Box output with last dimension 4");
         }
         const float pred_score = find_pred_score(outputs);
+        const std::array<float, 4> raw_pred_box = pred_box;
+        const cv::Rect2f previous_state = state_;
 
         for (float& value : pred_box) {
             value = value * static_cast<float>(kSearchSize) / search_crop.resize_factor;
         }
 
-        state_ = clip_box(map_box_back(pred_box, search_crop.resize_factor),
+        const cv::Rect2f mapped_candidate = map_box_back(pred_box, search_crop.resize_factor);
+        const cv::Rect2f candidate = stabilize_prediction(mapped_candidate, pred_score);
+        state_ = clip_box(candidate,
                           image.rows,
                           image.cols,
                           kClipMargin);
+
+        last_pred_score_ = pred_score;
+        debug_log_prediction(image, raw_pred_box, previous_state, mapped_candidate, pred_score);
 
         update_online_template(image, pred_score);
 
@@ -253,6 +409,122 @@ public:
     }
 
 private:
+    static void print_box(std::ostream& output, const cv::Rect2f& box)
+    {
+        output << '[' << box.x << ',' << box.y << ',' << box.width << ',' << box.height << ']';
+    }
+
+    static void print_box(std::ostream& output, const std::array<float, 4>& box)
+    {
+        output << '[' << box[0] << ',' << box[1] << ',' << box[2] << ',' << box[3] << ']';
+    }
+
+    // The raw head output is cxcywh normalized to the search crop, so anything far
+    // outside the crop or wider than the crop itself means the head lost the target.
+    static bool is_raw_range_suspicious(const std::array<float, 4>& raw_pred_box)
+    {
+        return raw_pred_box[0] < -0.25f || raw_pred_box[0] > 1.25f ||
+               raw_pred_box[1] < -0.25f || raw_pred_box[1] > 1.25f ||
+               raw_pred_box[2] <= 0.0f || raw_pred_box[2] > 1.5f ||
+               raw_pred_box[3] <= 0.0f || raw_pred_box[3] > 1.5f;
+    }
+
+    void debug_log_prediction(const cv::Mat& image,
+                              const std::array<float, 4>& raw_pred_box,
+                              const cv::Rect2f& previous_state,
+                              const cv::Rect2f& mapped_candidate,
+                              float pred_score)
+    {
+        if (!debug_) {
+            return;
+        }
+
+        std::vector<std::string> flags;
+        if (image.cols != last_image_width_ || image.rows != last_image_height_) {
+            flags.emplace_back("frame-size-change");
+        }
+        last_image_width_ = image.cols;
+        last_image_height_ = image.rows;
+
+        if (!std::isfinite(pred_score)) {
+            flags.emplace_back("non-finite-score");
+        } else if (pred_score < 0.0f) {
+            flags.emplace_back("missing-score");
+        } else if (pred_score < min_track_score_) {
+            flags.emplace_back("low-score");
+        }
+        if (is_raw_range_suspicious(raw_pred_box)) {
+            flags.emplace_back("raw-range");
+        }
+
+        float width_ratio = -1.0f;
+        float height_ratio = -1.0f;
+        float area_ratio = -1.0f;
+        float center_shift = -1.0f;
+        float occupancy = -1.0f;
+        const float frame_area = static_cast<float>(image.cols) * image.rows;
+        const bool comparable = previous_state.width > 0.0f && previous_state.height > 0.0f &&
+                                std::isfinite(mapped_candidate.width) &&
+                                std::isfinite(mapped_candidate.height) &&
+                                frame_area > 0.0f;
+        if (comparable) {
+            width_ratio = mapped_candidate.width / previous_state.width;
+            height_ratio = mapped_candidate.height / previous_state.height;
+            const float previous_area = previous_state.width * previous_state.height;
+            area_ratio = mapped_candidate.width * mapped_candidate.height / previous_area;
+
+            const float previous_cx = previous_state.x + 0.5f * previous_state.width;
+            const float previous_cy = previous_state.y + 0.5f * previous_state.height;
+            const float candidate_cx = mapped_candidate.x + 0.5f * mapped_candidate.width;
+            const float candidate_cy = mapped_candidate.y + 0.5f * mapped_candidate.height;
+            center_shift = std::hypot(candidate_cx - previous_cx, candidate_cy - previous_cy) /
+                           std::max(previous_state.width, previous_state.height);
+
+            occupancy = state_.width * state_.height / frame_area;
+
+            if (width_ratio < 0.5f || width_ratio > 2.0f ||
+                height_ratio < 0.5f || height_ratio > 2.0f) {
+                flags.emplace_back("scale-jump");
+            }
+            if (area_ratio < (1.0f / 3.0f) || area_ratio > 3.0f) {
+                flags.emplace_back("area-jump");
+            }
+            if (center_shift > 2.0f) {
+                flags.emplace_back("center-jump");
+            }
+            if (occupancy > 0.5f && previous_area / frame_area <= 0.5f) {
+                flags.emplace_back("large-frame-box");
+            }
+        }
+
+        if (flags.empty()) {
+            return;
+        }
+
+        std::cout << "[Debug][Anomaly] frame=" << frame_id_ << " flags=";
+        for (std::size_t i = 0; i < flags.size(); ++i) {
+            if (i > 0) {
+                std::cout << ',';
+            }
+            std::cout << flags[i];
+        }
+        std::cout << " score=" << pred_score
+                  << " frame_size=" << image.cols << 'x' << image.rows
+                  << " raw=";
+        print_box(std::cout, raw_pred_box);
+        std::cout << " prev=";
+        print_box(std::cout, previous_state);
+        std::cout << " mapped=";
+        print_box(std::cout, mapped_candidate);
+        std::cout << " final=";
+        print_box(std::cout, state_);
+        std::cout << " ratios=[w:" << width_ratio
+                  << ",h:" << height_ratio
+                  << ",area:" << area_ratio
+                  << ",shift:" << center_shift
+                  << ",occupancy:" << occupancy << ']' << std::endl;
+    }
+
     void init_onnx(const std::string& model_path)
     {
         std::cout << "[Info] Loading ONNX model from: " << model_path << std::endl;
@@ -393,7 +665,9 @@ private:
             for (int x = 0; x < output_size; ++x) {
                 const int offset = y * output_size + x;
                 for (int c = 0; c < 3; ++c) {
-                    tensor[static_cast<std::size_t>(c * plane_size + offset)] = row[x][c];
+                    tensor[static_cast<std::size_t>(c * plane_size + offset)] =
+                        (row[x][c] - kImageMean[static_cast<std::size_t>(c)]) /
+                        kImageStd[static_cast<std::size_t>(c)];
                 }
             }
         }
@@ -413,6 +687,55 @@ private:
                           cy_real - 0.5f * pred_box[3],
                           pred_box[2],
                           pred_box[3]);
+    }
+
+    cv::Rect2f stabilize_prediction(const cv::Rect2f& candidate, float pred_score) const
+    {
+        const bool valid = std::isfinite(candidate.x) &&
+                           std::isfinite(candidate.y) &&
+                           std::isfinite(candidate.width) &&
+                           std::isfinite(candidate.height) &&
+                           candidate.width > 0.0f &&
+                           candidate.height > 0.0f;
+        if (!valid || (pred_score >= 0.0f && pred_score < min_track_score_)) {
+            return state_;
+        }
+
+        if (frame_id_ <= 1) {
+            return candidate;
+        }
+
+        const float candidate_center_x = candidate.x + 0.5f * candidate.width;
+        const float candidate_center_y = candidate.y + 0.5f * candidate.height;
+        const float previous_center_x = state_.x + 0.5f * state_.width;
+        const float previous_center_y = state_.y + 0.5f * state_.height;
+
+        const float width = std::clamp(candidate.width,
+                                       state_.width / kMaxFrameScaleChange,
+                                       state_.width * kMaxFrameScaleChange);
+        const float height = std::clamp(candidate.height,
+                                        state_.height / kMaxFrameScaleChange,
+                                        state_.height * kMaxFrameScaleChange);
+
+        const float dx = candidate_center_x - previous_center_x;
+        const float dy = candidate_center_y - previous_center_y;
+        const float distance = std::hypot(dx, dy);
+        const float max_shift = std::max(
+            kMinCenterShiftPixels,
+            kMaxCenterShiftFactor * std::hypot(state_.width, state_.height));
+
+        float center_x = candidate_center_x;
+        float center_y = candidate_center_y;
+        if (distance > max_shift) {
+            const float ratio = max_shift / distance;
+            center_x = previous_center_x + dx * ratio;
+            center_y = previous_center_y + dy * ratio;
+        }
+
+        return cv::Rect2f(center_x - 0.5f * width,
+                          center_y - 0.5f * height,
+                          width,
+                          height);
     }
 
     cv::Rect2f clip_box(const cv::Rect2f& box, int image_h, int image_w, float margin) const
@@ -614,6 +937,11 @@ private:
     cv::Rect2f state_{0.0f, 0.0f, 0.0f, 0.0f};
     int frame_id_ = 0;
     float max_pred_score_ = -1.0f;
+    float last_pred_score_ = -1.0f;
+    float min_track_score_ = kMinTrackingScore;
+    bool debug_ = false;
+    int last_image_width_ = 0;
+    int last_image_height_ = 0;
     std::vector<float> template_tensor_;
     std::vector<float> online_template_tensor_;
     std::vector<float> online_max_template_tensor_;
@@ -641,9 +969,7 @@ public:
         setMouseTracking(true);
         setMinimumSize(640, 360);
 
-        if (!cap_.open(options_.video_path)) {
-            throw std::runtime_error("cannot open video: " + options_.video_path);
-        }
+        open_input();
 
         double fps = cap_.get(cv::CAP_PROP_FPS);
         if (!std::isfinite(fps) || fps <= 1.0) {
@@ -652,7 +978,7 @@ public:
         frame_interval_ms_ = std::max(1, static_cast<int>(std::round(1000.0 / fps)));
 
         if (!cap_.read(current_frame_) || current_frame_.empty()) {
-            throw std::runtime_error("cannot read first frame from video: " + options_.video_path);
+            throw std::runtime_error("cannot read first frame from " + input_description());
         }
         frame_image_ = mat_to_qimage(current_frame_);
 
@@ -759,6 +1085,68 @@ private:
         Error,
     };
 
+    std::string input_description() const
+    {
+        if (options_.use_camera) {
+            return "camera " + std::to_string(options_.camera_index);
+        }
+        return "video: " + options_.video_path;
+    }
+
+    void open_input()
+    {
+        cap_.release();
+        if (!options_.use_camera) {
+            if (!cap_.open(options_.video_path)) {
+                throw std::runtime_error("cannot open video: " + options_.video_path);
+            }
+            return;
+        }
+
+        if (!cap_.open(options_.camera_index)) {
+            throw std::runtime_error("cannot open camera: " +
+                                     std::to_string(options_.camera_index));
+        }
+
+        if (options_.camera_buffer_size > 0) {
+            cap_.set(cv::CAP_PROP_BUFFERSIZE, options_.camera_buffer_size);
+        }
+        if (!options_.camera_fourcc.empty()) {
+            cap_.set(cv::CAP_PROP_FOURCC,
+                     static_cast<double>(fourcc_from_string(options_.camera_fourcc)));
+        }
+        if (options_.camera_width > 0) {
+            cap_.set(cv::CAP_PROP_FRAME_WIDTH, options_.camera_width);
+        }
+        if (options_.camera_height > 0) {
+            cap_.set(cv::CAP_PROP_FRAME_HEIGHT, options_.camera_height);
+        }
+        if (options_.camera_fps > 0) {
+            cap_.set(cv::CAP_PROP_FPS, options_.camera_fps);
+        }
+
+        // Backends silently ignore unsupported requests, so report what actually took effect.
+        const int actual_fourcc = static_cast<int>(std::lround(cap_.get(cv::CAP_PROP_FOURCC)));
+        const int actual_width = static_cast<int>(std::lround(cap_.get(cv::CAP_PROP_FRAME_WIDTH)));
+        const int actual_height = static_cast<int>(std::lround(cap_.get(cv::CAP_PROP_FRAME_HEIGHT)));
+        const double actual_fps = cap_.get(cv::CAP_PROP_FPS);
+        std::cout << "[Camera] index=" << options_.camera_index
+                  << " format=" << fourcc_text(actual_fourcc)
+                  << " resolution=" << actual_width << 'x' << actual_height
+                  << " fps=" << actual_fps << std::endl;
+
+        if (!options_.camera_fourcc.empty() &&
+            actual_fourcc != fourcc_from_string(options_.camera_fourcc)) {
+            std::cerr << "[Warn] Camera kept format " << fourcc_text(actual_fourcc)
+                      << " instead of the requested " << options_.camera_fourcc << '.' << std::endl;
+        }
+        if ((options_.camera_width > 0 && actual_width != options_.camera_width) ||
+            (options_.camera_height > 0 && actual_height != options_.camera_height)) {
+            std::cerr << "[Warn] Camera adjusted the requested resolution to "
+                      << actual_width << 'x' << actual_height << '.' << std::endl;
+        }
+    }
+
     QRectF exit_button_rect() const
     {
         const int x = std::max(0, width() - kExitButtonWidth - kExitButtonMargin);
@@ -836,9 +1224,52 @@ private:
             return;
         }
 
+        painter.save();
+        const QRectF bbox_rect = image_to_widget_rect(latest_bbox_, draw_rect);
         painter.setPen(QPen(QColor(38, 230, 118), 3));
         painter.setBrush(Qt::NoBrush);
-        painter.drawRect(image_to_widget_rect(latest_bbox_, draw_rect));
+        painter.drawRect(bbox_rect);
+
+        // The score readout is the field diagnostic for CSP-1726: it shows at a glance
+        // whether the head is confident and whether the values span a plausible range.
+        const float score = tracker_->last_pred_score();
+        if (score >= 0.0f && std::isfinite(score)) {
+            QColor accent(255, 91, 91);
+            if (score >= kGoodTrackingScore) {
+                accent = QColor(38, 230, 118);
+            } else if (score >= tracker_->min_track_score()) {
+                accent = QColor(255, 190, 72);
+            }
+
+            const QString score_text = QString::number(score, 'f', 3);
+            QFont score_font = painter.font();
+            score_font.setPixelSize(16);
+            score_font.setWeight(QFont::DemiBold);
+            painter.setFont(score_font);
+
+            const QFontMetrics metrics(score_font);
+            const qreal pill_width =
+                std::max<qreal>(58.0, metrics.horizontalAdvance(score_text) + 22.0);
+            constexpr qreal pill_height = 30.0;
+            qreal pill_x = bbox_rect.center().x() - pill_width * 0.5;
+            pill_x = std::clamp(pill_x,
+                                draw_rect.left() + 4.0,
+                                std::max(draw_rect.left() + 4.0,
+                                         draw_rect.right() - pill_width - 4.0));
+            const qreal pill_y = std::max(draw_rect.top() + 4.0,
+                                          bbox_rect.top() - pill_height - 7.0);
+            const QRectF pill_rect(pill_x, pill_y, pill_width, pill_height);
+
+            painter.setPen(Qt::NoPen);
+            painter.setBrush(QColor(0, 0, 0, 105));
+            painter.drawRoundedRect(pill_rect.translated(0.0, 3.0), 9.0, 9.0);
+            painter.setPen(QPen(accent, 1.5));
+            painter.setBrush(QColor(13, 17, 20, 225));
+            painter.drawRoundedRect(pill_rect, 9.0, 9.0);
+            painter.setPen(QColor(245, 249, 247));
+            painter.drawText(pill_rect, Qt::AlignCenter, score_text);
+        }
+        painter.restore();
     }
 
     void draw_selection_overlay(QPainter& painter, const QRectF& draw_rect) const
@@ -925,6 +1356,9 @@ private:
         try {
             cv::Mat frame;
             if (!cap_.read(frame) || frame.empty()) {
+                if (options_.use_camera) {
+                    throw std::runtime_error("cannot read frame from " + input_description());
+                }
                 if (options_.loop) {
                     restart_tracking_loop();
                     return;
@@ -1024,7 +1458,10 @@ int main(int argc, char** argv)
 
         QApplication app(argc, argv);
 
-        auto tracker = std::make_unique<MixFormerV2Tracker>(options.model_path, options.backend);
+        auto tracker = std::make_unique<MixFormerV2Tracker>(options.model_path,
+                                                            options.backend,
+                                                            options.min_track_score,
+                                                            options.debug);
         TrackingWindow window(std::move(options), std::move(tracker));
 
         if (full_screen) {

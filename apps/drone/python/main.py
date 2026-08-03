@@ -25,6 +25,12 @@ DEFAULT_UPDATE_INTERVAL = 200
 TEMPLATE_UPDATE_THRESHOLD = 0.5
 MAX_SCORE_DECAY = 1.0
 CLIP_MARGIN = 10.0
+IMAGE_MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+IMAGE_STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+MIN_TRACKING_SCORE = 0.15
+MAX_FRAME_SCALE_CHANGE = 1.20
+MAX_CENTER_SHIFT_FACTOR = 0.75
+MIN_CENTER_SHIFT_PIXELS = 12.0
 EXIT_BTN_WIDTH = 32
 EXIT_BTN_HEIGHT = 28
 EXIT_BTN_MARGIN = 14
@@ -45,6 +51,7 @@ class MixFormerV2Tracker:
         self.state = (0, 0, 0, 0) # x, y, w, h
         self.frame_id = 0
         self.max_pred_score = -1.0
+        self.last_pred_score = -1.0
         self.backend_name = backend_name
         self.is_dxnn = (backend_name == "dxnn")
 
@@ -72,7 +79,8 @@ class MixFormerV2Tracker:
         self.state = init_bbox
         self.frame_id = 0
         self.max_pred_score = -1.0
-        
+        self.last_pred_score = -1.0
+
         self.template_tensor, _ = self.sample_target(image, self.state, TEMPLATE_FACTOR, TEMPLATE_SIZE)
         self.online_template_tensor = self.template_tensor.copy()
         self.online_max_template_tensor = self.template_tensor.copy()
@@ -94,9 +102,12 @@ class MixFormerV2Tracker:
             raise RuntimeError("Could not find Bounding Box output with last dimension 4")
             
         pred_score = self.find_pred_score(outputs)
-        
+        self.last_pred_score = pred_score
+
         pred_box = pred_box * SEARCH_SIZE / resize_factor
-        self.state = self.clip_box(self.map_box_back(pred_box, resize_factor), image.shape[0], image.shape[1], CLIP_MARGIN)
+        candidate = self.map_box_back(pred_box, resize_factor)
+        candidate = self.stabilize_prediction(candidate, pred_score)
+        self.state = self.clip_box(candidate, image.shape[0], image.shape[1], CLIP_MARGIN)
         
         self.update_online_template(image, pred_score)
         
@@ -139,6 +150,7 @@ class MixFormerV2Tracker:
         
         resized = cv2.resize(padded, (output_size, output_size))
         resized = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
+        resized = (resized - IMAGE_MEAN) / IMAGE_STD
         
         # Build CHW flat tensor exactly like C++ does:
         # tensor[c * plane_size + y * output_size + x] = row[x][c]
@@ -159,6 +171,51 @@ class MixFormerV2Tracker:
         cy_real = pred_box[1] + (cy_prev - half_side)
         
         return (cx_real - 0.5 * pred_box[2], cy_real - 0.5 * pred_box[3], pred_box[2], pred_box[3])
+
+    def stabilize_prediction(self, candidate, pred_score):
+        """Reject lost-target updates and limit implausible one-frame box jumps."""
+        values = np.asarray(candidate, dtype=np.float32)
+        if values.size != 4 or not np.all(np.isfinite(values)) or values[2] <= 0.0 or values[3] <= 0.0:
+            return self.state
+
+        if 0.0 <= pred_score < MIN_TRACKING_SCORE:
+            return self.state
+
+        if self.frame_id <= 1:
+            return tuple(float(v) for v in values)
+
+        prev_x, prev_y, prev_w, prev_h = self.state
+        cand_x, cand_y, cand_w, cand_h = (float(v) for v in values)
+
+        min_w = prev_w / MAX_FRAME_SCALE_CHANGE
+        max_w = prev_w * MAX_FRAME_SCALE_CHANGE
+        min_h = prev_h / MAX_FRAME_SCALE_CHANGE
+        max_h = prev_h * MAX_FRAME_SCALE_CHANGE
+        cand_w = float(np.clip(cand_w, min_w, max_w))
+        cand_h = float(np.clip(cand_h, min_h, max_h))
+
+        prev_cx = prev_x + 0.5 * prev_w
+        prev_cy = prev_y + 0.5 * prev_h
+        cand_cx = cand_x + 0.5 * float(values[2])
+        cand_cy = cand_y + 0.5 * float(values[3])
+        dx = cand_cx - prev_cx
+        dy = cand_cy - prev_cy
+        distance = math.hypot(dx, dy)
+        max_shift = max(
+            MIN_CENTER_SHIFT_PIXELS,
+            MAX_CENTER_SHIFT_FACTOR * math.hypot(prev_w, prev_h),
+        )
+        if distance > max_shift:
+            ratio = max_shift / distance
+            cand_cx = prev_cx + dx * ratio
+            cand_cy = prev_cy + dy * ratio
+
+        return (
+            cand_cx - 0.5 * cand_w,
+            cand_cy - 0.5 * cand_h,
+            cand_w,
+            cand_h,
+        )
 
     def clip_box(self, box, image_h, image_w, margin):
         x1, y1, w, h = box
@@ -232,9 +289,8 @@ class MixFormerV2Tracker:
 
     def find_pred_score(self, outputs):
         for out in outputs:
-            if out.shape[-1] != 4 or out.size == 1:
-                if out.size > 0:
-                    return sigmoid(out.flatten()[0])
+            if out.size == 1:
+                return sigmoid(out.flatten()[0])
         return -1.0
 
 class TrackingWindow(QWidget):
@@ -438,7 +494,12 @@ class TrackingWindow(QWidget):
         painter.setPen(QColor(188, 205, 196))
         
         if self.mode == "Selecting": status = "Drag over a target to start tracking"
-        elif self.mode == "Tracking": status = f"Tracking  |  {self.display_fps:.1f} FPS"
+        elif self.mode == "Tracking":
+            status = f"Tracking  |  {self.display_fps:.1f} FPS"
+            # Score readout is the field diagnostic for CSP-1726 tracking accuracy.
+            score = self.tracker.last_pred_score if self.tracker else -1.0
+            if score >= 0.0 and np.isfinite(score):
+                status += f"  |  score {score:.3f}"
         elif self.mode == "Finished": status = "Finished"
         else: status = self.status_text
         
@@ -475,21 +536,7 @@ class TrackingWindow(QWidget):
                 self.latest_bbox = self.tracker.update(frame)
             self.current_frame = frame
             
-            # Fast cv2 resizing for rendering
-            lbl_w, lbl_h = self.width(), self.height()
-            if lbl_w > 0 and lbl_h > 0:
-                aspect_ratio = self.current_frame.shape[1] / self.current_frame.shape[0]
-                if lbl_w / lbl_h > aspect_ratio:
-                    new_h = lbl_h
-                    new_w = int(new_h * aspect_ratio)
-                else:
-                    new_w = lbl_w
-                    new_h = int(new_w / aspect_ratio)
-                resized_frame = cv2.resize(self.current_frame, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
-            else:
-                resized_frame = self.current_frame
-                
-            self.frame_image = mat_to_qimage(resized_frame)
+            self.frame_image = mat_to_qimage(self.current_frame)
             
             self.update_fps()
             self.update()
