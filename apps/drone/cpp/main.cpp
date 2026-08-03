@@ -48,6 +48,7 @@ constexpr float kMaxFrameScaleChange = 1.20f;
 constexpr float kMaxCenterShiftFactor = 0.75f;
 constexpr float kMinCenterShiftPixels = 12.0f;
 constexpr float kGoodTrackingScore = 0.5f;
+constexpr int kTemplatePopupDurationMs = 2500;
 constexpr int kExitButtonWidth = 32;
 constexpr int kExitButtonHeight = 28;
 constexpr int kExitButtonMargin = 14;
@@ -102,6 +103,13 @@ struct InputView {
     const float* data = nullptr;
     std::size_t count = 0;
     std::array<int64_t, 4> shape{};
+};
+
+struct TemplateUpdatePreview {
+    QImage image;
+    int update_frame = 0;
+    int source_frame = -1;
+    float score = -1.0f;
 };
 
 std::string to_lower(std::string value)
@@ -318,6 +326,48 @@ QImage mat_to_qimage(const cv::Mat& bgr)
     return image.copy();
 }
 
+QImage template_tensor_to_qimage(const std::vector<float>& tensor)
+{
+    const int plane_size = kTemplateSize * kTemplateSize;
+    if (tensor.size() != static_cast<std::size_t>(3 * plane_size)) {
+        return {};
+    }
+
+    QImage image(kTemplateSize, kTemplateSize, QImage::Format_RGB888);
+    for (int y = 0; y < kTemplateSize; ++y) {
+        auto* row = image.scanLine(y);
+        for (int x = 0; x < kTemplateSize; ++x) {
+            const int offset = y * kTemplateSize + x;
+            for (int c = 0; c < 3; ++c) {
+                // Tensors carry ImageNet-normalized values, so undo mean/std before
+                // display; clamping the raw tensor would render an unreadable image.
+                const std::size_t channel = static_cast<std::size_t>(c);
+                const float value =
+                    tensor[static_cast<std::size_t>(c * plane_size + offset)] *
+                        kImageStd[channel] +
+                    kImageMean[channel];
+                row[3 * x + c] = static_cast<unsigned char>(
+                    std::lround(std::clamp(value, 0.0f, 1.0f) * 255.0f));
+            }
+        }
+    }
+    return image;
+}
+
+QString template_preview_description(const TemplateUpdatePreview& preview)
+{
+    const QString source = preview.source_frame >= 0
+                               ? QString::number(preview.source_frame)
+                               : QString("initial");
+    const QString score = preview.score >= 0.0f && std::isfinite(preview.score)
+                              ? QString::number(preview.score, 'f', 3)
+                              : QString("-");
+    return QString("Update %1  |  Source %2  |  Score %3")
+        .arg(preview.update_frame)
+        .arg(source)
+        .arg(score);
+}
+
 cv::Rect2f normalized_rect(const cv::Point2f& a, const cv::Point2f& b)
 {
     const float x1 = std::min(a.x, b.x);
@@ -355,15 +405,25 @@ public:
         last_pred_score_ = -1.0f;
         last_image_width_ = image.cols;
         last_image_height_ = image.rows;
+        online_max_template_frame_id_ = -1;
 
         template_tensor_ = sample_target(image, state_, kTemplateFactor, kTemplateSize).tensor;
         online_template_tensor_ = template_tensor_;
         online_max_template_tensor_ = template_tensor_;
+        pending_template_preview_ = {template_tensor_to_qimage(template_tensor_), 0, -1, -1.0f};
     }
 
     float last_pred_score() const
     {
         return last_pred_score_;
+    }
+
+    // Returns the pending preview once; a null image means nothing changed.
+    TemplateUpdatePreview take_template_update_preview()
+    {
+        TemplateUpdatePreview preview = std::move(pending_template_preview_);
+        pending_template_preview_ = {};
+        return preview;
     }
 
     float min_track_score() const
@@ -764,12 +824,18 @@ private:
                 online_max_template_tensor_ =
                     sample_target(image, state_, kTemplateFactor, kTemplateSize).tensor;
                 max_pred_score_ = pred_score;
+                online_max_template_frame_id_ = frame_id_;
             }
         }
 
         if (frame_id_ > 0 && frame_id_ % kDefaultUpdateInterval == 0) {
             online_template_tensor_ = online_max_template_tensor_;
+            pending_template_preview_ = {template_tensor_to_qimage(online_template_tensor_),
+                                         frame_id_,
+                                         online_max_template_frame_id_,
+                                         max_pred_score_};
             max_pred_score_ = -1.0f;
+            online_max_template_frame_id_ = -1;
             online_max_template_tensor_ = template_tensor_;
         }
     }
@@ -942,9 +1008,11 @@ private:
     bool debug_ = false;
     int last_image_width_ = 0;
     int last_image_height_ = 0;
+    int online_max_template_frame_id_ = -1;
     std::vector<float> template_tensor_;
     std::vector<float> online_template_tensor_;
     std::vector<float> online_max_template_tensor_;
+    TemplateUpdatePreview pending_template_preview_;
 
     Ort::Env ort_env_;
     Ort::SessionOptions ort_options_;
@@ -958,11 +1026,67 @@ private:
     std::vector<std::string> dx_input_names_;
 };
 
+// Shows the online template the tracker is actually matching against, which is how
+// template drift becomes visible instead of only showing up as a wandering box.
+class TemplatePreviewWindow : public QWidget {
+public:
+    explicit TemplatePreviewWindow(QWidget* parent = nullptr)
+        : QWidget(parent, Qt::Window)
+    {
+        setWindowTitle("Online Target Template");
+        setMinimumSize(280, 320);
+        resize(360, 400);
+    }
+
+    void show_preview(TemplateUpdatePreview preview)
+    {
+        if (preview.image.isNull()) {
+            return;
+        }
+
+        image_ = std::move(preview.image);
+        description_ = template_preview_description(preview);
+
+        show();
+        update();
+    }
+
+protected:
+    void paintEvent(QPaintEvent*) override
+    {
+        QPainter painter(this);
+        painter.fillRect(rect(), QColor(18, 20, 24));
+
+        painter.setPen(QColor(225, 230, 236));
+        painter.drawText(rect().adjusted(12, 10, -12, 0),
+                         Qt::AlignHCenter | Qt::AlignTop,
+                         description_);
+
+        if (image_.isNull()) {
+            return;
+        }
+
+        const QRect image_area = rect().adjusted(12, 42, -12, -12);
+        QSize draw_size = image_.size();
+        draw_size.scale(image_area.size(), Qt::KeepAspectRatio);
+        const QRect draw_rect(image_area.center().x() - draw_size.width() / 2,
+                              image_area.center().y() - draw_size.height() / 2,
+                              draw_size.width(),
+                              draw_size.height());
+        painter.drawImage(draw_rect, image_);
+    }
+
+private:
+    QImage image_;
+    QString description_;
+};
+
 class TrackingWindow : public QWidget {
 public:
     TrackingWindow(AppOptions options, std::unique_ptr<MixFormerV2Tracker> tracker)
         : options_(std::move(options)),
-          tracker_(std::move(tracker))
+          tracker_(std::move(tracker)),
+          template_preview_window_(this)
     {
         setWindowTitle(QString("MixFormerV2 Tracking (%1)").arg(QString::fromStdString(backend_label(options_.backend))));
         setFocusPolicy(Qt::StrongFocus);
@@ -990,6 +1114,12 @@ public:
             process_next_frame();
         });
         timer_.setTimerType(Qt::PreciseTimer);
+
+        template_popup_timer_.setSingleShot(true);
+        connect(&template_popup_timer_, &QTimer::timeout, this, [this]() {
+            template_popup_visible_ = false;
+            update();
+        });
     }
 
 protected:
@@ -1009,6 +1139,7 @@ protected:
         draw_tracking_overlay(painter, image_rect);
         draw_selection_overlay(painter, image_rect);
         draw_hud(painter, image_rect);
+        draw_template_popup(painter);
         draw_exit_button(painter);
         if (!launcher_ready_notified_) {
             notify_launcher_ready();
@@ -1272,6 +1403,76 @@ private:
         painter.restore();
     }
 
+    // A separate window is unusable in fullscreen kiosk mode, so mirror it as a
+    // self-dismissing corner card instead.
+    void draw_template_popup(QPainter& painter) const
+    {
+        if (!options_.full_screen || !template_popup_visible_ ||
+            fullscreen_template_image_.isNull()) {
+            return;
+        }
+
+        painter.save();
+        painter.setRenderHint(QPainter::Antialiasing, true);
+        painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
+
+        const int popup_width = std::clamp(width() / 6, 200, 280);
+        const int popup_height = popup_width + 54;
+        constexpr int margin = 24;
+        const QRectF panel(width() - popup_width - margin,
+                           height() - popup_height - margin,
+                           popup_width,
+                           popup_height);
+
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(QColor(0, 0, 0, 120));
+        painter.drawRoundedRect(panel.translated(0.0, 5.0), 14.0, 14.0);
+        painter.setPen(QPen(QColor(76, 235, 148, 210), 1.5));
+        painter.setBrush(QColor(13, 17, 20, 225));
+        painter.drawRoundedRect(panel, 14.0, 14.0);
+
+        QFont caption_font = painter.font();
+        caption_font.setPixelSize(12);
+        caption_font.setWeight(QFont::DemiBold);
+        painter.setFont(caption_font);
+        painter.setPen(QColor(226, 235, 230));
+        painter.drawText(panel.adjusted(10, 8, -10, -popup_width - 8),
+                         Qt::AlignCenter | Qt::TextWordWrap,
+                         fullscreen_template_description_);
+
+        const QRectF image_rect = panel.adjusted(12, 42, -12, -12);
+        QSizeF image_size = fullscreen_template_image_.size();
+        image_size.scale(image_rect.size(), Qt::KeepAspectRatio);
+        const QRectF target_rect(image_rect.center().x() - image_size.width() * 0.5,
+                                 image_rect.center().y() - image_size.height() * 0.5,
+                                 image_size.width(),
+                                 image_size.height());
+        painter.setPen(QPen(QColor(255, 255, 255, 45), 1.0));
+        painter.setBrush(Qt::NoBrush);
+        painter.drawRoundedRect(target_rect.adjusted(-1, -1, 1, 1), 5.0, 5.0);
+        painter.drawImage(target_rect, fullscreen_template_image_);
+        painter.restore();
+    }
+
+    void show_template_preview()
+    {
+        TemplateUpdatePreview preview = tracker_->take_template_update_preview();
+        if (preview.image.isNull()) {
+            return;
+        }
+
+        if (options_.full_screen) {
+            fullscreen_template_description_ = template_preview_description(preview);
+            fullscreen_template_image_ = std::move(preview.image);
+            template_popup_visible_ = true;
+            template_popup_timer_.start(kTemplatePopupDurationMs);
+            update();
+            return;
+        }
+
+        template_preview_window_.show_preview(std::move(preview));
+    }
+
     void draw_selection_overlay(QPainter& painter, const QRectF& draw_rect) const
     {
         if (mode_ != Mode::Selecting) {
@@ -1340,6 +1541,7 @@ private:
         }
 
         tracker_->init(current_frame_, selected_roi_);
+        show_template_preview();
         latest_bbox_ = selected_roi_;
         mode_ = Mode::Tracking;
         last_frame_time_ = std::chrono::steady_clock::now();
@@ -1370,6 +1572,7 @@ private:
             }
 
             const cv::Rect bbox = tracker_->update(frame);
+            show_template_preview();
             latest_bbox_ = cv::Rect2f(static_cast<float>(bbox.x),
                                       static_cast<float>(bbox.y),
                                       static_cast<float>(bbox.width),
@@ -1402,6 +1605,7 @@ private:
         current_frame_ = std::move(first_frame);
         frame_image_ = mat_to_qimage(current_frame_);
         tracker_->init(current_frame_, selected_roi_);
+        show_template_preview();
         latest_bbox_ = selected_roi_;
         display_fps_ = 0.0;
         last_frame_time_ = std::chrono::steady_clock::now();
@@ -1426,15 +1630,20 @@ private:
 
     AppOptions options_;
     std::unique_ptr<MixFormerV2Tracker> tracker_;
+    TemplatePreviewWindow template_preview_window_;
     cv::VideoCapture cap_;
     cv::Mat current_frame_;
     QImage frame_image_;
     QTimer timer_;
+    QTimer template_popup_timer_;
+    QImage fullscreen_template_image_;
+    QString fullscreen_template_description_;
 
     Mode mode_ = Mode::Selecting;
     int frame_interval_ms_ = 33;
     bool dragging_ = false;
     bool launcher_ready_notified_ = false;
+    bool template_popup_visible_ = false;
     cv::Point2f drag_start_{0.0f, 0.0f};
     cv::Point2f drag_current_{0.0f, 0.0f};
     cv::Rect2f selected_roi_{};
