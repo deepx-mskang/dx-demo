@@ -368,6 +368,7 @@ static int devideBoard(int numImages)
 int main(int argc, char *argv[])
 {
 DXRT_TRY_CATCH_BEGIN
+    disableGstVaapiDecoders();
     std::string configPath = "";
     double frameCount = 0.0, window_size = 60.0;
     bool loggingVersion = false;
@@ -436,7 +437,6 @@ DXRT_TRY_CATCH_BEGIN
     }
     yoloParam = getYoloParameter(appConfig.model_name);
     Yolo yolo = Yolo(yoloParam);
-    auto& profiler = dxrt::Profiler::GetInstance();
     std::vector<std::shared_ptr<ObjectDetection>> apps;
     uint64_t allFrameCount = 0;  // 64비트로 변경하여 오버플로우 방지
     bool calcFps = false;
@@ -564,7 +564,6 @@ DXRT_TRY_CATCH_BEGIN
         app->Run(appConfig.input_capture_period_ms);
     }
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    profiler.Add("spread");
     /* Debugging */
     std::vector<cv::Rect> dstPoint = std::vector<cv::Rect>(apps.size(), cv::Rect(0, 0, 0, 0));
     for(int i = 0; i < (int)apps.size(); i++)
@@ -778,7 +777,6 @@ DXRT_TRY_CATCH_BEGIN
         }
         
     }
-    profiler.Erase("spread");
 #ifdef __linux__
     sleep(1);
 #elif _WIN32

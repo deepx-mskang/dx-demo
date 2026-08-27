@@ -16,6 +16,9 @@ if [ ! -d "${WORKSPACE}/models" ] || [ ! -d "${WORKSPACE}/videos" ]; then
     "${ROOT_DIR}/setup_assets.sh"
 fi
 
+# Depth panel model: fetched separately from the model zoo, skipped if present.
+"${ROOT_DIR}/scripts/fetch_yolo26_depth_model.sh"
+
 cd "${ROOT_DIR}"/apps/yolo26
 
 
@@ -29,7 +32,7 @@ if [ "$DX_BACKEND" == "python" ]; then
             	--model "${WORKSPACE}/models/common/yolo26s.dxnn" \
             	--model-pose "${WORKSPACE}/models/common/yolo26s-pose.dxnn" \
             	--model-seg "${WORKSPACE}/models/common/yolo26s-seg.dxnn" \
-            	--demo-image "${ROOT_DIR}/workspace/assets/yolo26/yolo26-demo.png" \
+            	--model-depth "${WORKSPACE}/models/depth/yolo26-depth-s_768x768.dxnn" \
             	-v "${DX_CAMERA_IDX:-0}"
         elif [ -n "$(find . -maxdepth 2 -name '*.py' -not -name '__init__.py' | head -n 1)" ]; then
             py_file=$(find . -maxdepth 2 -name '*.py' -not -name '__init__.py' | head -n 1)
@@ -37,7 +40,7 @@ if [ "$DX_BACKEND" == "python" ]; then
             	--model "${WORKSPACE}/models/common/yolo26s.dxnn" \
             	--model-pose "${WORKSPACE}/models/common/yolo26s-pose.dxnn" \
             	--model-seg "${WORKSPACE}/models/common/yolo26s-seg.dxnn" \
-            	--demo-image "${ROOT_DIR}/workspace/assets/yolo26/yolo26-demo.png" \
+            	--model-depth "${WORKSPACE}/models/depth/yolo26-depth-s_768x768.dxnn" \
             	-v "${DX_CAMERA_IDX:-0}"
         else
             echo "Error: Python backend not implemented for $(pwd)"
@@ -56,7 +59,7 @@ else
     	--model "${WORKSPACE}/models/common/yolo26s.dxnn" \
     	--model-pose "${WORKSPACE}/models/common/yolo26s-pose.dxnn" \
     	--model-seg "${WORKSPACE}/models/common/yolo26s-seg.dxnn" \
-    	--demo-image "${ROOT_DIR}/workspace/assets/yolo26/yolo26-demo.png" \
+    	--model-depth "${WORKSPACE}/models/depth/yolo26-depth-s_768x768.dxnn" \
     	--device "${DX_CAMERA_DEV:-/dev/video0}" \
     	--exit-btn
 

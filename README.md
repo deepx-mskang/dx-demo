@@ -4,6 +4,13 @@ DEEPX NPU 런타임(DXRT)을 활용한 데모 모음입니다. 객체 검출, �
 
 **지원 환경:** Ubuntu 20.04 / 22.04 / 24.04 / debian 12 / debian 13 (x86_64, aarch64)
 
+> **⚠️ 디스플레이 해상도:** 데모 화면은 **1920 × 1080** 고정 캔버스 기준으로 그려집니다. 데모 실행 전 모니터 해상도를 1920×1080 으로 설정하세요. 다른 해상도(예: 2560×1440)에서는 풀스크린 레이아웃이 어긋나거나 화면 일부가 잘려 보일 수 있습니다.
+>
+> ```bash
+> xrandr                                     # 출력 이름과 지원 해상도 확인
+> xrandr --output HDMI-2 --mode 1920x1080    # 출력 이름은 위에서 확인한 값으로
+> ```
+
 ---
 
 ## Repository 구조
@@ -17,6 +24,7 @@ DEEPX NPU 런타임(DXRT)을 활용한 데모 모음입니다. 객체 검출, �
 | `hand-landmark/` | 손 검출 Qt5 데모 |
 | `launcher/` | PyQt5 기반 통합 런처 |
 | `paddle-ocr/` | PaddleOCR 카메라 데모 |
+| `paddle-ocr-web/` | PP-OCRv5 Web 문서 OCR 데모 (Gradio + FastAPI, `build.sh` 로 환경 구성) |
 | `yolo26/` | YOLO26 분류·검출·세그멘테이션·포즈 추정 |
 | `yolo-multi/` | 멀티 채널 YOLO 객체 검출 |
 | `model-zoo/` | DEEPX Model Zoo HTML 문서 |
@@ -132,6 +140,24 @@ workspace/
 
 ---
 
+## Model Zoo 업데이트
+
+`model-zoo/` 데모는 미리 받아 둔 정적 HTML 페이지를 브라우저로 엽니다. 최신 페이지로 갱신하려면 DEEPX 사내망에서 아래를 실행하세요. 별도 인증 토큰은 필요하지 않습니다.
+
+```bash
+./apps/model-zoo/update_modelzoo.sh
+```
+
+`apps/model-zoo/DX_ModelZoo_<YYYYMMDD>.html` 로 저장하고 `DX_ModelZoo_latest.html` 심볼릭 링크를 새 파일로 바꿉니다. 런처의 **Model Zoo → Start** 는 이 링크를 엽니다. 다운로드가 실패하면 기존 HTML 과 링크를 그대로 유지합니다.
+
+| 환경 변수 | 설명 |
+|-----------|------|
+| `DX_MODELZOO_URL` | publish 엔드포인트 변경 (기본: `https://modelzoo-publish-api.devops.dpx.ai/publish/html`) |
+
+`wget` 이 필요합니다 (`sudo apt install -y wget`). 엔드포인트는 사내 CA(`devops.dpx.ai`) 인증서를 쓰기 때문에 `--no-check-certificate` 로 받습니다.
+
+---
+
 ## Camera Configuration (카메라 설정)
 
 All camera-based demos (Python, C++, and JSON-configured apps) are centralized through the `config.sh` file located at the root of the repository.
@@ -187,7 +213,7 @@ cd depth          # 예시: depth 데모
 | `hand-landmark/` | 손 검출 |
 | `paddle-ocr/cam-ppocr-v6/` | PP-OCR v6 |
 | `yolo-multi/` | 멀티 채널 YOLO |
-| `yolo26/yolo26s_3/` | YOLO26 3모델 |
+| `yolo26/yolo26s_3/` | YOLO26 4모델 (검출/포즈/세그멘테이션/깊이) |
 
 
 ---

@@ -29,10 +29,10 @@ if [ "$DX_BACKEND" == "python" ]; then
         cd python
         if [ -n "$(find . -maxdepth 2 -name '*.py' -not -name '__init__.py' | grep -i 'main\|demo\|gui' | head -n 1)" ]; then
             py_file=$(find . -maxdepth 2 -name '*.py' -not -name '__init__.py' | grep -i 'main\|demo\|gui' | head -n 1)
-            source "${ROOT_DIR}"/.venv/bin/activate && python "$py_file" -c "$TMP_CONFIG"
+            source "${ROOT_DIR}"/.venv/bin/activate && python "$py_file" -c "$TMP_CONFIG" --exit-btn
         elif [ -n "$(find . -maxdepth 2 -name '*.py' -not -name '__init__.py' | head -n 1)" ]; then
             py_file=$(find . -maxdepth 2 -name '*.py' -not -name '__init__.py' | head -n 1)
-            source "${ROOT_DIR}"/.venv/bin/activate && python "$py_file" -c "$TMP_CONFIG"
+            source "${ROOT_DIR}"/.venv/bin/activate && python "$py_file" -c "$TMP_CONFIG" --exit-btn
         else
             echo "Error: Python backend not implemented for $(pwd)"
             read -t 3 -p "Press enter to exit..." || true

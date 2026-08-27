@@ -47,10 +47,10 @@ MAIN_TITLE_I18N = {
 }
 
 # How many launcher cards to show (first N entries of LAUNCHER_ITEMS).
-NUM_ITEMS = 9
+NUM_ITEMS = 13
 
 # Grid columns; rows are computed as ceil(NUM_ITEMS / GRID_COLUMNS).
-GRID_COLUMNS = 3
+GRID_COLUMNS = 4
 
 # Launcher root (directory containing this file); assets and ready state live here.
 _ROOT = Path(__file__).resolve().parent
@@ -75,11 +75,11 @@ _ready_finishers: dict[str, Callable[[], None]] = {}
 DEFAULT_BUTTON_LOADING_SEC = 1.0
 LAUNCHER_ITEMS = [
     {
-        "title": "YOLO26-S (OD / POSE / SEG)",
+        "title": "YOLO26-S (OD / POSE / SEG / DEPTH)",
         "title_i18n": {
-            "zh": "YOLO26-S (目标检测 / 姿态 / 分割)",
-            "ja": "YOLO26-S (物体検出 / ポーズ / 分割)",
-            "ko": "YOLO26-S (객체 탐지 / 자세 / 분할)",
+            "zh": "YOLO26-S (目标检测 / 姿态 / 分割 / 深度)",
+            "ja": "YOLO26-S (物体検出 / ポーズ / 分割 / 深度)",
+            "ko": "YOLO26-S (객체 탐지 / 자세 / 분할 / 깊이)",
         },
         "image": "assets/demo-yolo26.png",
         "video_script": "../scripts/run_yolo26_3_video.sh",
@@ -111,6 +111,21 @@ LAUNCHER_ITEMS = [
         "video_script": "../scripts/run_ocr.sh",
         "loading_sec": 30,
         "video_label": "PaddleOCR v6",
+    },
+    {
+        "title": "Optical Character Recognition (Web)",
+        "title_i18n": {
+            "zh": "光学字符识别 (网页版)",
+            "ja": "光学文字認識 (Web版)",
+            "ko": "광학 문자 인식 (웹)",
+        },
+        "image": "assets/demo-ocr-web.png",
+        "video_label": "PP-OCRv5 Web",
+        "camera_label": "Stop",
+        "video_script": "../scripts/run_ocr_web.sh",
+        "camera_script": "../scripts/kill_ocr_web.sh",
+        "video_loading_sec": 90,
+        "camera_loading_sec": 0,
     },
     {
         "title": "YOLOv5S Multi-channel (36)",
@@ -152,6 +167,21 @@ LAUNCHER_ITEMS = [
         "loading_sec": 5,
     },
     {
+        "title": "Real-Time Road Scene Perception",
+        "title_i18n": {
+            "zh": "实时道路场景感知",
+            "ja": "リアルタイム道路シーン認識",
+            "ko": "실시간 도로 장면 인식",
+        },
+        "image": "assets/demo-automotive.png",
+        "video_label": "PIDNet",
+        "camera_label": "YOLOPv2",
+        "video_script": "../scripts/run_automotive_pidnet.sh",
+        "camera_script": "../scripts/run_automotive_yolopv2.sh",
+        "extra_buttons": [{"label": "SFA3D", "script": "../scripts/run_automotive_sfa3d.sh"}],
+        "loading_sec": 5,
+    },
+    {
         "title": "Drone Tracking",
         "title_i18n": {
             "zh": "无人机跟踪",
@@ -174,6 +204,21 @@ LAUNCHER_ITEMS = [
         "video_script": "../scripts/run_clip_single_video.sh",
         "camera_script": "../scripts/run_clip_single.sh",
         "loading_sec": 15,
+    },
+    {
+        "title": "Model Zoo",
+        "title_i18n": {
+            "zh": "模型库",
+            "ja": "モデルズー",
+            "ko": "모델 주",
+        },
+        "image": "assets/demo-modelzoo.png",
+        "video_label": "Start",
+        "camera_label": "Stop",
+        "video_script": "../scripts/run_modelzoo.sh",
+        "camera_script": "../scripts/kill_modelzoo.sh",
+        "video_loading_sec": 10,
+        "camera_loading_sec": 0,
     },
     {
         "title": "Performance Monitoring (CPU / NPU)",

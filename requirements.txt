@@ -1,4 +1,5 @@
 PyQt5
+PySide6
 opencv-contrib-python-headless
 numpy
 scipy

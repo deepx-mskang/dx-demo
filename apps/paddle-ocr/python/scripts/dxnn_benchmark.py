@@ -68,50 +68,18 @@ class OCRBenchmark:
         if mode == 'async':
             # Initialize async pipeline
             from engine.paddleocr import AsyncPipelineOCR
-            from dx_engine import InferenceEngine as IE
-            
-            model_dir = '../../workspace/models/ocr/server'
-            if use_mobile:
-                model_dir = '../../workspace/models/ocr/mobile'
-            # Load detection models
-            if not use_mobile:            
-                det_640 = IE(f'{model_dir}/det_v5_640.dxnn')
-                det_960 = IE(f'{model_dir}/det_v5_960.dxnn')
-            else:
-                det_640 = IE(f'{model_dir}/det_mobile_640.dxnn')
-                det_960 = IE(f'{model_dir}/det_mobile_960.dxnn')
-                 
-            det_models = {640: det_640, 960: det_960}
-            
-            # Load classification model
-            cls_model = IE(f'{model_dir}/textline_ori.dxnn')
-            if not use_mobile:
-                # Load recognition models
-                rec_3 = IE(f'{model_dir}/rec_v5_ratio_3.dxnn')
-                rec_5 = IE(f'{model_dir}/rec_v5_ratio_5.dxnn')
-                rec_10 = IE(f'{model_dir}/rec_v5_ratio_10.dxnn')
-                rec_15 = IE(f'{model_dir}/rec_v5_ratio_15.dxnn')
-                rec_25 = IE(f'{model_dir}/rec_v5_ratio_25.dxnn')
-                rec_35 = IE(f'{model_dir}/rec_v5_ratio_35.dxnn')
-            else:
-                # Load recognition models
-                rec_3 = IE(f'{model_dir}/rec_mobile_ratio_3.dxnn')
-                rec_5 = IE(f'{model_dir}/rec_mobile_ratio_5.dxnn')
-                rec_10 = IE(f'{model_dir}/rec_mobile_ratio_10.dxnn')
-                rec_15 = IE(f'{model_dir}/rec_mobile_ratio_15.dxnn')
-                rec_25 = IE(f'{model_dir}/rec_mobile_ratio_25.dxnn')
-                rec_35 = IE(f'{model_dir}/rec_mobile_ratio_35.dxnn')
-            
-            rec_models = {
-                3: rec_3, 5: rec_5, 10: rec_10, 15: rec_15, 25: rec_25, 35: rec_35,
-                'ratio_3': rec_3, 'ratio_5': rec_5, 'ratio_10': rec_10,
-                'ratio_15': rec_15, 'ratio_25': rec_25, 'ratio_35': rec_35
-            }
-            rec_dict_dir = f'{model_dir}/ppocrv5_dict.txt'
-            
-            # Load document preprocessing models
-            doc_ori = IE(f'{model_dir}/doc_ori_fixed.dxnn')
-            doc_unwarp = IE(f'{model_dir}/UVDoc_pruned_p3.dxnn')
+
+            # Same model set and asset resolution as the sync path and as the
+            # C++ demo: PP-OCRv6 from workspace/models/ocr/v6.
+            from scripts.ocr_engine import create_ocr_models
+
+            det_models, cls_model, rec_models_by_ratio, rec_dict_dir, doc_ori, doc_unwarp = (
+                create_ocr_models(use_doc_preprocessing=True, use_mobile=use_mobile)
+            )
+
+            # AsyncPipelineOCR also indexes rec models by 'ratio_N' string keys.
+            rec_models = dict(rec_models_by_ratio)
+            rec_models.update({f'ratio_{k}': v for k, v in rec_models_by_ratio.items()})
             
             self.ocr_engine = AsyncPipelineOCR(
                 det_models=det_models,

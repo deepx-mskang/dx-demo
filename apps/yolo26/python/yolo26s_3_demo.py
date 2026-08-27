@@ -73,6 +73,7 @@ class ResultBundle:
         self.od = None
         self.pose = None
         self.seg = None
+        self.depth = None
 
 class ResultStore:
     def __init__(self):
@@ -80,11 +81,13 @@ class ResultStore:
         self.od_results = {}
         self.pose_results = {}
         self.seg_results = {}
-        
+        self.depth_results = {}
+
         self.latest_od = None
         self.latest_pose = None
         self.latest_seg = None
-        
+        self.latest_depth = None
+
         self.MAX_CACHE = 10
 
     def add_od(self, frame_id, result):
@@ -108,6 +111,13 @@ class ResultStore:
             self._cleanup()
             self.cond.notify_all()
 
+    def add_depth(self, frame_id, result):
+        with self.cond:
+            self.depth_results[frame_id] = result
+            self.latest_depth = result
+            self._cleanup()
+            self.cond.notify_all()
+
     def _cleanup(self):
         if len(self.od_results) > self.MAX_CACHE:
             oldest = min(self.od_results.keys())
@@ -118,6 +128,9 @@ class ResultStore:
         if len(self.seg_results) > self.MAX_CACHE:
             oldest = min(self.seg_results.keys())
             del self.seg_results[oldest]
+        if len(self.depth_results) > self.MAX_CACHE:
+            oldest = min(self.depth_results.keys())
+            del self.depth_results[oldest]
 
     def wait_for(self, frame_id, timeout=0.1):
         start_time = time.time()
@@ -133,13 +146,18 @@ class ResultStore:
                     bundle.od = self.od_results[frame_id]
                     bundle.pose = self.pose_results[frame_id]
                     bundle.seg = self.seg_results[frame_id]
+                    # Depth runs at 768x768 and lags the other models, so it is
+                    # best-effort: it never gates readiness, and a frame without
+                    # its own depth result reuses the most recent one.
+                    bundle.depth = self.depth_results.get(frame_id, self.latest_depth)
                     return bundle
-                
+
                 elapsed = time.time() - start_time
                 if elapsed >= timeout:
                     bundle.od = self.od_results.get(frame_id, self.latest_od)
                     bundle.pose = self.pose_results.get(frame_id, self.latest_pose)
                     bundle.seg = self.seg_results.get(frame_id, self.latest_seg)
+                    bundle.depth = self.depth_results.get(frame_id, self.latest_depth)
                     return bundle
                 
                 self.cond.wait(timeout - elapsed)
@@ -394,6 +412,74 @@ class SegWorker(threading.Thread):
                 
             self.store.add_seg(packet.id, results)
 
+class DepthWorker(threading.Thread):
+    """YOLO26-Depth-S monocular depth estimation.
+
+    The compiled model folds its own normalization in, so the input is a plain
+    uint8 RGB letterbox at the model's native size - no /255 or mean/std here.
+    Input is NHWC [1,768,768,3] uint8, output is [1,1,768,768] float32.
+    """
+    def __init__(self, model_path, in_queue, store, running):
+        super().__init__()
+        self.model_path = model_path
+        self.in_queue = in_queue
+        self.store = store
+        self.running = running
+        self.engine = None
+        self.net_w = 768
+        self.net_h = 768
+
+    def _read_input_size(self):
+        try:
+            info = self.engine.get_input_tensors_info()
+        except Exception:
+            return
+        if not info:
+            return
+        shape = list(info[0].get('shape', []))
+        if len(shape) == 4 and shape[3] == 3:
+            self.net_h, self.net_w = int(shape[1]), int(shape[2])
+
+    def run(self):
+        try:
+            self.engine = InferenceEngine(self.model_path)
+        except Exception as e:
+            print(f"Failed to load Depth model: {e}")
+            return
+
+        self._read_input_size()
+
+        while self.running[0]:
+            packet = self.in_queue.pop_for(0.1)
+            if not packet: continue
+
+            orig_h, orig_w = packet.frame.shape[:2]
+            padded, scale, pad_w, pad_h = make_letterbox(packet.frame, self.net_w, self.net_h)
+            img_rgb = cv2.cvtColor(padded, cv2.COLOR_BGR2RGB)
+            input_tensor = np.ascontiguousarray(img_rgb, dtype=np.uint8)
+
+            job_id = self.engine.run_async([input_tensor])
+            outputs = self.engine.wait(job_id)
+            if not outputs: continue
+
+            depth = np.squeeze(outputs[0])
+            if depth.ndim != 2: continue
+
+            # Undo the letterbox: crop the padding off before scaling back, or
+            # the border pixels bias the min/max normalisation below.
+            new_w, new_h = int(orig_w * scale), int(orig_h * scale)
+            sx = depth.shape[1] / self.net_w
+            sy = depth.shape[0] / self.net_h
+            x1, y1 = int(round(pad_w * sx)), int(round(pad_h * sy))
+            x2 = min(depth.shape[1], x1 + max(1, int(round(new_w * sx))))
+            y2 = min(depth.shape[0], y1 + max(1, int(round(new_h * sy))))
+            if x2 <= x1 or y2 <= y1: continue
+
+            depth = cv2.resize(depth[y1:y2, x1:x2], (orig_w, orig_h),
+                               interpolation=cv2.INTER_LINEAR)
+
+            self.store.add_depth(packet.id, depth)
+
 def draw_od(frame, results):
     if not results: return frame
     out = frame.copy()
@@ -469,8 +555,23 @@ def draw_seg(frame, results):
                 
                 roi[mask_indices] = roi[mask_indices] * 0.5 + colored_mask[mask_indices] * 0.5
                 out[y1_c:y2_c, x1_c:x2_c] = roi
-                
+
     return out
+
+def draw_depth(frame, depth):
+    if depth is None: return frame
+    out = depth
+    if out.shape[:2] != frame.shape[:2]:
+        out = cv2.resize(out, (frame.shape[1], frame.shape[0]), interpolation=cv2.INTER_LINEAR)
+
+    # Per-frame min/max: the model emits relative depth with no fixed range.
+    min_d, max_d = float(out.min()), float(out.max())
+    if max_d > min_d:
+        normalized = ((out - min_d) * (255.0 / (max_d - min_d))).astype(np.uint8)
+    else:
+        normalized = np.zeros(out.shape[:2], dtype=np.uint8)
+
+    return cv2.applyColorMap(normalized, cv2.COLORMAP_TURBO)
 
 class VideoThread(QThread):
     frame_ready = Signal(object)
@@ -522,7 +623,8 @@ class VideoThread(QThread):
             self.queues['od'].push(FramePacket(frame_id, frame.copy(), None))
             self.queues['pose'].push(FramePacket(frame_id, frame.copy(), None))
             self.queues['seg'].push(FramePacket(frame_id, frame.copy(), None))
-            
+            self.queues['depth'].push(FramePacket(frame_id, frame.copy(), None))
+
             bundle = self.store.wait_for(frame_id, timeout=0.0)
             bundle.raw_frame = raw_frame
             self.frame_ready.emit(bundle)
@@ -549,16 +651,13 @@ class DemoWindow(QMainWindow):
             layout.addWidget(lbl, i // 2, i % 2)
             self.labels.append(lbl)
             
-        self.demo_img = None
-        if os.path.exists(options.demo_image):
-            self.demo_img = cv2.imread(options.demo_image)
-            
         self.running = [True]
         self.store = ResultStore()
         self.queues = {
             'od': BoundedQueue(2),
             'pose': BoundedQueue(2),
-            'seg': BoundedQueue(2)
+            'seg': BoundedQueue(2),
+            'depth': BoundedQueue(2)
         }
         
         self.fps_queue = deque(maxlen=30)
@@ -567,7 +666,8 @@ class DemoWindow(QMainWindow):
         self.workers = [
             ODWorker(options.model, self.queues['od'], self.store, self.running),
             PoseWorker(options.model_pose, self.queues['pose'], self.store, self.running),
-            SegWorker(options.model_seg, self.queues['seg'], self.store, self.running)
+            SegWorker(options.model_seg, self.queues['seg'], self.store, self.running),
+            DepthWorker(options.model_depth, self.queues['depth'], self.store, self.running)
         ]
         for w in self.workers: w.start()
         
@@ -587,16 +687,14 @@ class DemoWindow(QMainWindow):
             od_img = draw_od(bundle.raw_frame, bundle.od)
             pose_img = draw_pose(bundle.raw_frame, bundle.pose)
             seg_img = draw_seg(bundle.raw_frame, bundle.seg)
-            
+            depth_img = draw_depth(bundle.raw_frame, bundle.depth)
+
             self.set_image(self.labels[0], od_img, "YOLO26-S Object Detection" + fps_str)
             self.set_image(self.labels[1], pose_img, "YOLO26-S Pose Estimation" + fps_str)
             self.set_image(self.labels[2], seg_img, "YOLO26-S Instance Segmentation" + fps_str)
-            
-            if self.demo_img is not None:
-                self.set_image(self.labels[3], self.demo_img, "YOLO26-S Demo")
-            else:
-                self.set_image(self.labels[3], bundle.raw_frame, "YOLO26-S Demo" + fps_str)
-                
+            self.set_image(self.labels[3], depth_img, "YOLO26-S Depth Estimation" + fps_str)
+
+
     def set_image(self, label, cv_img, title):
         target_w, target_h = label.size().width(), label.size().height()
         if target_w > 0 and target_h > 0:
@@ -632,7 +730,7 @@ def main():
     parser.add_argument("--model", type=str, default="../workspace/models/common/yolo26s.dxnn")
     parser.add_argument("--model-pose", type=str, default="../workspace/models/common/yolo26s-pose.dxnn")
     parser.add_argument("--model-seg", type=str, default="../workspace/models/common/yolo26s-seg.dxnn")
-    parser.add_argument("--demo-image", type=str, default="../../workspace/assets/yolo26/yolo26-demo.png")
+    parser.add_argument("--model-depth", type=str, default="../workspace/models/depth/yolo26-depth-s_768x768.dxnn")
     parser.add_argument("-v", "--video", type=str, default="")
     parser.add_argument("--no-loop-video", action="store_true")
     args = parser.parse_args()

@@ -46,4 +46,19 @@ else
     echo "No requirements.txt found."
 fi
 
+echo "========================================"
+echo "Installing DXRT Python bindings (dx_engine)..."
+echo "========================================"
+# The dx_engine wheels ship with the libdxrt-bin package. Pick the one matching
+# this interpreter; the OCR Python backend imports dx_engine at startup.
+DXRT_WHEEL_DIR="/usr/share/libdxrt-bin/python"
+PY_TAG="cp$(python -c 'import sys; print(f"{sys.version_info.major}{sys.version_info.minor}")')"
+DXRT_WHEEL=$(ls "${DXRT_WHEEL_DIR}"/dx_engine-*-${PY_TAG}-*.whl 2>/dev/null | head -n 1)
+if [ -n "${DXRT_WHEEL}" ]; then
+    pip install "${DXRT_WHEEL}"
+else
+    echo "Warning: no dx_engine wheel for ${PY_TAG} in ${DXRT_WHEEL_DIR}."
+    echo "         Install DXRT (libdxrt-bin) first; demos with a Python NPU backend will not run without it."
+fi
+
 echo "Environment setup complete."

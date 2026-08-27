@@ -1,6 +1,6 @@
 /**
  * @file yolo26s_3.cpp
- * @brief Qt5 2x2 YOLO26-S demo for three inference tasks plus a demo image panel.
+ * @brief Qt5 2x2 YOLO26-S demo: object detection, pose, segmentation and depth.
  */
 
 #include <dxrt/dxrt_api.h>
@@ -54,6 +54,7 @@
 #include "factory/yolo26s_factory.hpp"
 #include "factory/yolo26s_pose_factory.hpp"
 #include "factory/yolo26s_seg_factory.hpp"
+#include "factory/yolo26_depth_s_factory.hpp"
 
 namespace stdfs = std::filesystem;
 
@@ -63,16 +64,17 @@ constexpr int kPanelCount = 4;
 constexpr int kOdPanel = 0;
 constexpr int kPosePanel = 1;
 constexpr int kSegPanel = 2;
-constexpr int kDemoPanel = 3;
+constexpr int kDepthPanel = 3;
 constexpr int kOdAsyncQueueSize = 2;
 constexpr int kPoseAsyncQueueSize = 2;
 constexpr int kSegAsyncQueueSize = 3;
+constexpr int kDepthAsyncQueueSize = 2;
 
 const char* kPanelTitles[kPanelCount] = {
     "YOLO26-S Object Detection",
     "YOLO26-S Pose Estimation",
     "YOLO26-S Instance Segmentation",
-    "YOLO26-S Demo",
+    "YOLO26-S Depth Estimation",
 };
 
 std::string projectPath(const std::string& rel) {
@@ -92,7 +94,7 @@ struct AppArgs {
     std::string model = projectPath("../../workspace/models/common/yolo26s.dxnn");
     std::string model_pose = projectPath("../../workspace/models/common/yolo26s-pose.dxnn");
     std::string model_seg = projectPath("../../workspace/models/common/yolo26s-seg.dxnn");
-    std::string demo_image = projectPath("../../workspace/assets/yolo26/yolo26-demo.png");
+    std::string model_depth = projectPath("../../workspace/models/depth/yolo26-depth-s_768x768.dxnn");
     std::string video;
     bool no_loop_video = false;
     std::string device = "/dev/video0";
@@ -114,7 +116,7 @@ AppArgs parseArgs(int argc, char* argv[]) {
     AppArgs args;
     cxxopts::Options options(
         "yolo26s_3",
-        "Qt5 2x2 YOLO26-S demo: object detection, pose, instance segmentation, demo image.");
+        "Qt5 2x2 YOLO26-S demo: object detection, pose, instance segmentation, depth.");
 
     options.add_options()
         ("model", "YOLOv26 detection .dxnn",
@@ -123,8 +125,8 @@ AppArgs parseArgs(int argc, char* argv[]) {
          cxxopts::value<std::string>(args.model_pose)->default_value(args.model_pose))
         ("model-seg", "YOLOv26 segmentation .dxnn",
          cxxopts::value<std::string>(args.model_seg)->default_value(args.model_seg))
-        ("demo-image", "Image shown in the bottom-right panel.",
-         cxxopts::value<std::string>(args.demo_image)->default_value(args.demo_image))
+        ("model-depth", "YOLO26 depth .dxnn",
+         cxxopts::value<std::string>(args.model_depth)->default_value(args.model_depth))
         ("video", "Video file path input. If omitted, USB webcam is used.",
          cxxopts::value<std::string>(args.video)->default_value(""))
         ("no-loop-video", "With --video, stop at EOF instead of looping.",
@@ -605,6 +607,93 @@ cv::Mat renderSegmentationFast(const cv::Mat& frame,
     return output;
 }
 
+/**
+ * @brief Depth panel render.
+ *
+ * The factory's DepthVisualizer (MAGMA colormap blended over the frame at
+ * alpha 0.6) is deliberately unused, exactly as the detection/pose/segmentation
+ * visualizers are: this panel shows a pure TURBO depth map.
+ *
+ * The letterbox padding is cropped before normalisation, otherwise the neutral
+ * grey border skews the per-frame min/max.
+ */
+cv::Mat renderDepthTurbo(const cv::Mat& frame,
+                         const std::vector<dxapp::DepthResult>& results,
+                         const dxapp::PreprocessContext& ctx) {
+    if (results.empty() || results.front().depth_map.empty()) {
+        return {};
+    }
+    const cv::Mat& depth = results.front().depth_map;
+
+    const int out_w = ctx.original_width > 0 ? ctx.original_width : frame.cols;
+    const int out_h = ctx.original_height > 0 ? ctx.original_height : frame.rows;
+    if (out_w <= 0 || out_h <= 0) {
+        return {};
+    }
+
+    // Padding is recorded at model-input resolution; map it onto the depth map's
+    // own resolution rather than assuming the two match.
+    cv::Rect crop(0, 0, depth.cols, depth.rows);
+    if (ctx.input_width > 0 && ctx.input_height > 0 && ctx.scale > 0.0f) {
+        const double sx = static_cast<double>(depth.cols) / ctx.input_width;
+        const double sy = static_cast<double>(depth.rows) / ctx.input_height;
+        const int content_w = static_cast<int>(ctx.original_width * ctx.scale);
+        const int content_h = static_cast<int>(ctx.original_height * ctx.scale);
+        const int x1 = clampInt(cvRound(ctx.pad_x * sx), 0, depth.cols - 1);
+        const int y1 = clampInt(cvRound(ctx.pad_y * sy), 0, depth.rows - 1);
+        const int w = clampInt(cvRound(content_w * sx), 1, depth.cols - x1);
+        const int h = clampInt(cvRound(content_h * sy), 1, depth.rows - y1);
+        crop = cv::Rect(x1, y1, w, h);
+    }
+
+    cv::Mat restored;
+    cv::resize(depth(crop), restored, cv::Size(out_w, out_h), 0.0, 0.0, cv::INTER_LINEAR);
+
+    // Per-frame min/max: the model emits relative depth with no fixed range.
+    // FastDepthPostprocessor already normalised over the padded map, but that is
+    // an affine transform and cancels exactly against this one.
+    double min_depth = 0.0;
+    double max_depth = 0.0;
+    cv::minMaxLoc(restored, &min_depth, &max_depth);
+    cv::Mat normalized;
+    if (max_depth > min_depth) {
+        restored.convertTo(normalized, CV_8U,
+                           255.0 / (max_depth - min_depth),
+                           -255.0 * min_depth / (max_depth - min_depth));
+    } else {
+        normalized = cv::Mat::zeros(restored.size(), CV_8U);
+    }
+
+    cv::Mat colored;
+    cv::applyColorMap(normalized, colored, cv::COLORMAP_TURBO);
+    return colored;
+}
+
+/// IDepthEstimationFactory and IClassificationFactory declare
+/// createPostprocessor(int, int); IDetectionFactory, IPoseFactory and
+/// IInstanceSegmentationFactory add an is_ort_configured flag. Dispatch on the
+/// factory type rather than the result type, so a future classification panel
+/// works without becoming a second special case.
+template <typename FactoryT, typename = void>
+struct takes_ort_flag : std::false_type {};
+
+template <typename FactoryT>
+struct takes_ort_flag<
+    FactoryT,
+    std::void_t<decltype(std::declval<FactoryT&>().createPostprocessor(0, 0, false))>>
+    : std::true_type {};
+
+template <typename FactoryT>
+auto makePostprocessor(FactoryT& factory, int input_width, int input_height,
+                       bool is_ort_configured) {
+    if constexpr (takes_ort_flag<FactoryT>::value) {
+        return factory.createPostprocessor(input_width, input_height, is_ort_configured);
+    } else {
+        (void)is_ort_configured;
+        return factory.createPostprocessor(input_width, input_height);
+    }
+}
+
 template <typename ResultT, typename FactoryT>
 class ResultWorker final : public IFrameConsumer {
 public:
@@ -842,23 +931,6 @@ QFrame* makePanel(const QString& title,
     return frame;
 }
 
-QWidget* makeDemoImagePanel(QLabel** image_label, QLabel** fps_label) {
-    auto* image = new QLabel;
-    image->setAlignment(Qt::AlignCenter);
-    image->setScaledContents(true);
-    image->setMinimumSize(0, 0);
-    image->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-    image->setFocusPolicy(Qt::NoFocus);
-    image->setStyleSheet("background-color: #0c0d10;");
-
-    auto* fps = new QLabel(image);
-    fps->hide();
-
-    *image_label = image;
-    *fps_label = fps;
-    return image;
-}
-
 class QuadWindow final : public QMainWindow {
 public:
     explicit QuadWindow(const AppArgs& args)
@@ -881,23 +953,15 @@ public:
         for (int i = 0; i < kPanelCount; ++i) {
             QLabel* image = nullptr;
             QLabel* fps = nullptr;
-            QWidget* panel = (i == kDemoPanel)
-                ? makeDemoImagePanel(&image, &fps)
-                : makePanel(kPanelTitles[i],
-                            &image,
-                            &fps,
-                            args_.show_exit_button && i == kPosePanel);
+            QWidget* panel = makePanel(kPanelTitles[i],
+                                       &image,
+                                       &fps,
+                                       args_.show_exit_button && i == kPosePanel);
             grid->addWidget(panel, cells[i][0], cells[i][1]);
             image_labels_.push_back(image);
             fps_labels_.push_back(fps);
             fps_counts_.push_back(0);
         }
-
-        cv::Mat demo_image = cv::imread(args_.demo_image, cv::IMREAD_COLOR);
-        if (demo_image.empty()) {
-            throw std::runtime_error("[ERROR] Could not read demo image: " + args_.demo_image);
-        }
-        setPanelFrame(kDemoPanel, demo_image, false);
 
         fps_timer_ = new QTimer(this);
         fps_timer_->setInterval(1000);
@@ -921,6 +985,8 @@ public:
             args_.debug_seg_timing,
             args_.debug_timing_interval_ms,
             seg_render_options));
+        workers_.push_back(std::make_unique<ResultWorker<dxapp::DepthResult, dxapp::Yolo26DepthSFactory>>(
+            kDepthPanel, "Depth Estimation", args_.model_depth, kDepthAsyncQueueSize, this));
 
         std::vector<IFrameConsumer*> consumers;
         consumers.reserve(workers_.size());
@@ -1002,32 +1068,27 @@ private:
             int fourcc = cv::VideoWriter::fourcc('m', 'p', '4', 'v');
             
             for (int i = 0; i < kPanelCount; ++i) {
-                if (i == kDemoPanel) {
-                    // Skip demo panel
-                    video_writers_.push_back(cv::VideoWriter());
-                } else {
-                    std::string output_path = args_.output_video;
-                    if (i > 0) {
-                        // Insert panel index before file extension
-                        size_t dot_pos = output_path.rfind('.');
-                        if (dot_pos != std::string::npos) {
-                            output_path.insert(dot_pos, "_panel" + std::to_string(i));
-                        } else {
-                            output_path += "_panel" + std::to_string(i);
-                        }
-                    }
-                    
-                    cv::VideoWriter writer(output_path, fourcc, args_.fps, 
-                                          cv::Size(args_.width, args_.height), true);
-                    if (writer.isOpened()) {
-                        video_writers_.push_back(writer);
-                        std::cout << "[INFO] Video writer initialized: " << output_path 
-                                  << " (" << args_.width << "x" << args_.height 
-                                  << " @ " << args_.fps << " FPS)" << std::endl;
+                std::string output_path = args_.output_video;
+                if (i > 0) {
+                    // Insert panel index before file extension
+                    size_t dot_pos = output_path.rfind('.');
+                    if (dot_pos != std::string::npos) {
+                        output_path.insert(dot_pos, "_panel" + std::to_string(i));
                     } else {
-                        std::cerr << "[WARN] Failed to open video writer for: " << output_path << std::endl;
-                        video_writers_.push_back(cv::VideoWriter());
+                        output_path += "_panel" + std::to_string(i);
                     }
+                }
+
+                cv::VideoWriter writer(output_path, fourcc, args_.fps,
+                                      cv::Size(args_.width, args_.height), true);
+                if (writer.isOpened()) {
+                    video_writers_.push_back(writer);
+                    std::cout << "[INFO] Video writer initialized: " << output_path
+                              << " (" << args_.width << "x" << args_.height
+                              << " @ " << args_.fps << " FPS)" << std::endl;
+                } else {
+                    std::cerr << "[WARN] Failed to open video writer for: " << output_path << std::endl;
+                    video_writers_.push_back(cv::VideoWriter());
                 }
             }
         } catch (const std::exception& e) {
@@ -1036,8 +1097,8 @@ private:
     }
 
     void saveFrame(int panel_index, const cv::Mat& frame) {
-        if (panel_index < 0 || panel_index >= static_cast<int>(video_writers_.size()) || 
-            frame.empty() || panel_index == kDemoPanel) {
+        if (panel_index < 0 || panel_index >= static_cast<int>(video_writers_.size()) ||
+            frame.empty()) {
             return;
         }
         
@@ -1178,7 +1239,7 @@ void ResultWorker<ResultT, FactoryT>::run() {
         FactoryT factory;
         auto preprocessor = factory.createPreprocessor(input_width, input_height);
         std::shared_ptr<dxapp::IPostprocessor<ResultT>> postprocessor(
-            factory.createPostprocessor(input_width, input_height, ie.IsOrtConfigured()));
+            makePostprocessor(factory, input_width, input_height, ie.IsOrtConfigured()));
         std::shared_ptr<dxapp::IVisualizer<ResultT>> visualizer(factory.createVisualizer());
 
         std::cout << "[INFO] " << name_ << " model: " << model_path_ << std::endl;
@@ -1216,6 +1277,8 @@ void ResultWorker<ResultT, FactoryT>::run() {
                         rendered = renderDetectionsThinText(job->frame, results);
                     } else if constexpr (std::is_same_v<ResultT, dxapp::PoseResult>) {
                         rendered = renderPoseThinText(job->frame, results, job->ctx);
+                    } else if constexpr (std::is_same_v<ResultT, dxapp::DepthResult>) {
+                        rendered = renderDepthTurbo(job->frame, results, job->ctx);
                     } else {
                         rendered = visualizer->draw(job->frame, results, job->ctx);
                     }
@@ -1419,7 +1482,7 @@ int main(int argc, char* argv[]) {
         args.model = absolutePath(args.model);
         args.model_pose = absolutePath(args.model_pose);
         args.model_seg = absolutePath(args.model_seg);
-        args.demo_image = absolutePath(args.demo_image);
+        args.model_depth = absolutePath(args.model_depth);
         if (!args.video.empty()) {
             args.video = absolutePath(args.video);
         }
@@ -1427,7 +1490,7 @@ int main(int argc, char* argv[]) {
         requireFile("OD model", args.model);
         requireFile("Pose model", args.model_pose);
         requireFile("Seg model", args.model_seg);
-        requireFile("Demo image", args.demo_image);
+        requireFile("Depth model", args.model_depth);
         if (!args.video.empty()) {
             requireFile("Video file", args.video);
         }

@@ -7,6 +7,11 @@ import torch
 
 module_dir = Path(__file__).resolve().parent
 
+# PP-OCRv6 models, dictionary and fonts live in the shared workspace tree, four
+# levels above this module (engine/ -> python/ -> paddle-ocr/ -> apps/ -> root).
+V6_ASSETS_DIR = (module_dir / ".." / ".." / ".." / ".." / "workspace" / "models" / "ocr" / "v6").resolve()
+V6_FONT_DIR = V6_ASSETS_DIR / "fonts"
+
 
 def torch_to_numpy(tensor: torch.Tensor) -> np.ndarray:
     return tensor.detach().cpu().numpy()
@@ -113,9 +118,17 @@ def det_router(width, height):
 
 
 def rec_router(width, height):
+    """Fallback ratio bucket for the PP-OCRv6 rec model set.
+
+    RecognitionNode routes on the capacities it reads from the loaded models;
+    this ladder only matters when those are unavailable. Keep the buckets in
+    step with the rec_fixed_v6_ratio_*.dxnn files that ship in workspace.
+    """
     ratio = width / height
 
-    if ratio <= 3:
+    if ratio <= 1:
+        ratio_res = 1
+    elif ratio <= 2.5:
         ratio_res = 3
     elif ratio <= 5:
         ratio_res = 5
@@ -126,7 +139,7 @@ def rec_router(width, height):
     elif ratio <= 25:
         ratio_res = 25
     else:
-        ratio_res = 35
+        ratio_res = 40
 
     return ratio_res
 
@@ -308,7 +321,7 @@ def infer_args():
     )
     parser.add_argument("--use_space_char", type=str2bool, default=True)
     parser.add_argument(
-        "--vis_font_path", type=str, default=str(module_dir / "../../../workspace/models/ocr/v6/fonts/NotoSansJP-VariableFont_wght.ttf")
+        "--vis_font_path", type=str, default=str(V6_FONT_DIR / "NotoSansJP-VariableFont_wght.ttf")
     )
     parser.add_argument("--drop_score", type=float, default=0.5)
 
