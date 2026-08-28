@@ -2,9 +2,11 @@
 """
 CPU + NPU 모니터 (PyQt5 + psutil).
 
-NPU 코어 utilization은 dxtop 과 동일 소스(DX-RT GET_USAGE IPC)를 사용합니다.
-ctypes 로 메인 프로세스에서 SysV 메시지 큐를 직접 호출하면 일부 환경에서
-인터프리터 종료 시 세그폴트가 있어, `dxrt_ipc_query.py` 자식 프로세스로 조회합니다.
+NPU 코어 utilization은 dxtop 과 동일 소스를 사용합니다.
+DXRT 3.x 는 SysV 메시지 큐 대신 유닉스 소켓(/tmp/dxrt_dynamic_ipc.sock) 기반이라
+dx_engine 의 DeviceStatus.get_core_utilization() 으로 조회합니다.
+DXRT 2.x 런타임을 위해 기존 GET_USAGE IPC 경로(`dxrt_ipc_query.py` 자식 프로세스)를
+폴백으로 남겨둡니다.
 """
 
 from __future__ import annotations
@@ -46,10 +48,49 @@ def configure_overlay_window(window: QWidget) -> None:
     window.setAttribute(Qt.WA_ShowWithoutActivating, True)
 
 
-def fetch_npu_utilization(device_id: int = 0) -> Tuple[List[Optional[float]], Optional[str]]:
+def _npu_utilization_via_dx_engine(
+    device_id: int,
+) -> Optional[Tuple[List[Optional[float]], Optional[str]]]:
     """
-    코어 0..2 utilization (%). 실패 시 (전부 None, 에러 문자열).
+    DXRT 3.x: dx_engine DeviceStatus (dxtop 과 동일 소스). 미지원 런타임이면 None.
     """
+    try:
+        from dx_engine.device_status import DeviceStatus
+    except ImportError:
+        return None
+
+    if not hasattr(DeviceStatus, "get_core_utilization"):
+        return None
+
+    try:
+        ds = DeviceStatus.get_current_status(device_id)
+    except Exception as e:  # noqa: BLE001
+        return [None] * NPU_CORE_COUNT, f"DeviceStatus: {e}"
+
+    try:
+        if not ds.is_valid():
+            return [None] * NPU_CORE_COUNT, "device status stale (dxrtd?)"
+    except Exception:  # noqa: BLE001
+        pass
+
+    out: List[Optional[float]] = []
+    for core in range(NPU_CORE_COUNT):
+        try:
+            v = float(ds.get_core_utilization(core))
+        except Exception:  # noqa: BLE001
+            v = -1.0
+        # 범위 밖 core_id 는 -1.0
+        out.append(None if v < 0.0 else min(100.0, v))
+
+    if all(x is None for x in out):
+        return out, "no core utilization"
+    return out, None
+
+
+def _npu_utilization_via_legacy_ipc(
+    device_id: int,
+) -> Tuple[List[Optional[float]], Optional[str]]:
+    """DXRT 2.x: SysV 메시지 큐 GET_USAGE IPC (자식 프로세스)."""
     if not _IPC_SCRIPT.is_file():
         return [None] * NPU_CORE_COUNT, f"missing {_IPC_SCRIPT.name}"
 
@@ -89,6 +130,20 @@ def fetch_npu_utilization(device_id: int = 0) -> Tuple[List[Optional[float]], Op
     if all(x is None for x in out) and err:
         return out, str(err)
     return out, str(err) if err else None
+
+
+def fetch_npu_utilization(device_id: int = 0) -> Tuple[List[Optional[float]], Optional[str]]:
+    """
+    코어 0..2 utilization (%). 실패 시 (전부 None, 에러 문자열).
+    """
+    via_engine = _npu_utilization_via_dx_engine(device_id)
+    if via_engine is not None and any(x is not None for x in via_engine[0]):
+        return via_engine
+
+    legacy = _npu_utilization_via_legacy_ipc(device_id)
+    if any(x is not None for x in legacy[0]):
+        return legacy
+    return via_engine if via_engine is not None else legacy
 
 
 def try_device_status_temperature(device_id: int, ch: int) -> Optional[int]:

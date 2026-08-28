@@ -5,6 +5,8 @@ REPO_ROOT=$(cd "$(dirname "$0")" && pwd)
 clean_args=()
 lang_cpp=true
 lang_python=true
+setup_ocr_web=true
+ocr_web_failed=false
 
 while (( $# )); do
     case "$1" in
@@ -25,7 +27,14 @@ while (( $# )); do
             fi
             shift 2
             ;;
-        *) echo "Unknown argument: $1"; echo "Usage: $0 [--clean] [--lang cpp|python|all]"; exit 1;;
+        --no-ocr-web) setup_ocr_web=false; shift;;
+        *)
+            echo "Unknown argument: $1"
+            echo "Usage: $0 [--clean] [--lang cpp|python|all] [--no-ocr-web]"
+            echo "  --no-ocr-web   Skip the OCR Web environment setup (heavy: clones repos,"
+            echo "                 creates two venvs, installs paddlepaddle)"
+            exit 1
+            ;;
     esac
 done
 
@@ -35,6 +44,25 @@ if [ "$lang_python" = true ]; then
     echo "========================================"
     bash "$REPO_ROOT/setup_env.sh"
     echo ""
+
+    if [ "$setup_ocr_web" = true ]; then
+        echo "========================================"
+        echo "Setting up OCR Web Environment"
+        echo "========================================"
+        # Clones two repos and builds its own venvs, so it is network-bound and slow.
+        # A failure here must not abort the C++ build below; it is reported at the end.
+        if bash "$REPO_ROOT/apps/paddle-ocr-web/build.sh" "${clean_args[@]}"; then
+            echo "  OK   apps/paddle-ocr-web"
+        else
+            ocr_web_failed=true
+            echo "FAILED: apps/paddle-ocr-web" >&2
+            echo "        Retry with apps/paddle-ocr-web/python/build.sh" >&2
+        fi
+        echo ""
+    else
+        echo "Skipping the OCR Web environment setup (--no-ocr-web)."
+        echo ""
+    fi
 fi
 
 if [ "$lang_cpp" = true ]; then
@@ -81,7 +109,18 @@ if [ "$lang_cpp" = true ]; then
             for target in "${failed[@]}"; do
                 echo "  FAIL $target"
             done
+            if [ "$ocr_web_failed" = true ]; then
+                echo "  FAIL apps/paddle-ocr-web (OCR Web environment)" >&2
+            fi
             exit 1
         fi
     fi
+fi
+
+if [ "$ocr_web_failed" = true ]; then
+    echo "========================================" >&2
+    echo "The OCR Web environment setup failed - the OCR Web demo will not start." >&2
+    echo "Retry with apps/paddle-ocr-web/python/build.sh" >&2
+    echo "========================================" >&2
+    exit 1
 fi
