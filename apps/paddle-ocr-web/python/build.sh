@@ -61,13 +61,64 @@ clone_if_missing "${SERVER_DIR}" "${SERVER_REPO}"
 
 # --- 2. Web UI venv -----------------------------------------------------------
 # Kept apart from the shared repo .venv because gradio 5.30.0 is pinned.
+#
+# requirements.txt pins pillow==9.5.0, which has no wheel for python 3.12+. Which
+# interpreter we land on depends on the shell build.sh was started from (running
+# it inside the dx-runtime venv gives 3.12), so on some machines pip falls back to
+# the pillow sdist: that build needs zlib/libjpeg headers and, without libwebp-dev,
+# quietly yields a Pillow with no WebP encoder - which then breaks every Gradio
+# gallery render. --only-binary=Pillow turns that into a clean resolution failure
+# we can handle, instead of a slow source build with a silently broken result.
+install_web_requirements() {
+    local req="${WEB_DIR}/requirements.txt"
+    if "${VENV_DIR}"/bin/pip install --only-binary=Pillow -r "${req}"; then
+        return
+    fi
+    echo "No Pillow wheel for $("${VENV_DIR}"/bin/python -V); installing a newer Pillow instead."
+    local filtered
+    filtered="$(mktemp)"
+    grep -viE '^[[:space:]]*pillow([[:space:]]*[<>=!~]|$)' "${req}" > "${filtered}"
+    "${VENV_DIR}"/bin/pip install -r "${filtered}"
+    rm -f "${filtered}"
+    # Upper bound comes from gradio 5.30 (pillow<12.0)
+    "${VENV_DIR}"/bin/pip install --only-binary=:all: 'pillow>=10.4,<12.0'
+}
+
 if [ -x "${VENV_DIR}/bin/python" ]; then
     echo "Already present: web UI venv"
 else
     echo "Creating the web UI venv ..."
     python3 -m venv "${VENV_DIR}"
     "${VENV_DIR}"/bin/pip install --upgrade pip
-    "${VENV_DIR}"/bin/pip install -r "${WEB_DIR}"/requirements.txt
+    install_web_requirements
+fi
+
+# --- 2b. Pillow WebP support --------------------------------------------------
+# Safety net for the same problem, covering venvs that step 2 did not create:
+# environments built before the guard above, and the rare wheel without WebP.
+# gradio's Gallery writes WebP by default, so a Pillow lacking the encoder makes
+# every result render die with `KeyError: 'WEBP'` after a successful inference.
+# Runs on every build.sh, including when the venv above was already present.
+pillow_has_webp() {
+    "${VENV_DIR}"/bin/python -c \
+        'from PIL import features; raise SystemExit(0 if features.check("webp") else 1)' \
+        > /dev/null 2>&1
+}
+
+if pillow_has_webp; then
+    echo "Already present: Pillow with WebP support"
+else
+    echo "Pillow was built without WebP; installing a binary wheel ..."
+    # --force-reinstall, not --upgrade: a source-built Pillow can satisfy the
+    # version range while still missing the encoder, and pip would then do
+    # nothing ("already satisfied") and leave the venv broken.
+    "${VENV_DIR}"/bin/pip install --force-reinstall --only-binary=:all: 'pillow>=10.4,<12.0'
+    if ! pillow_has_webp; then
+        echo "Error: Pillow still has no WebP support; the Gradio gallery will fail."
+        echo "  Check the pip output above, or install libwebp-dev and rebuild Pillow."
+        exit 1
+    fi
+    echo "Pillow with WebP support installed."
 fi
 
 # --- 3. OCR server env --------------------------------------------------------
