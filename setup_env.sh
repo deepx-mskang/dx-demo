@@ -81,13 +81,13 @@ if "$VENV_PY" -c 'import dx_engine' 2>/dev/null; then
    echo "dx_engine is already importable in .venv. Skipping." 
 elif [ -n "${DXRT_WHEEL}" ]; then 
    # Do not abort the whole setup (set -e) if this one install fails. 
-   "$VENV_PIP" install "${DXRT_WHEEL}" \ 
+   "$VENV_PIP" install "${DXRT_WHEEL}" \
        || echo "Warning: failed to install $(basename "${DXRT_WHEEL}")." 
 elif [ -f "${DXRT_ROOT}/python_package/setup.py" ]; then 
    # Source build: compile the bindings against the installed libdxrt. 
    # Without DX_ROOT_DIR the build cannot find lib/include and fails. 
    echo "Building dx_engine from ${DXRT_ROOT}/python_package ..." 
-   CMAKE_ARGS="-DDX_ROOT_DIR=${DXRT_ROOT}" "$VENV_PIP" install "${DXRT_ROOT}/python_package" \ 
+   CMAKE_ARGS="-DDX_ROOT_DIR=${DXRT_ROOT}" "$VENV_PIP" install "${DXRT_ROOT}/python_package" \
        || echo "Warning: failed to build dx_engine from ${DXRT_ROOT}/python_package." 
 else 
    echo "========================================" 
