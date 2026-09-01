@@ -20,6 +20,13 @@ export default function Layout({ title, subtitle, step, children }: Props) {
             <span className="text-sm text-dx-muted">Serial-QR Demo</span>
           </Link>
 
+          <Link
+            to="/devices"
+            className="text-sm text-dx-muted transition-colors hover:text-dx-cyan"
+          >
+            기기 관리
+          </Link>
+
           {step && (
             <ol className="ml-auto flex items-center gap-2 text-xs">
               {STEPS.map((label, i) => {

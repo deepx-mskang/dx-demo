@@ -19,6 +19,15 @@ export interface OcrPerf {
   cps: number
 }
 
+/** 서버가 화면을 멈추라고 판단한 근거. */
+export type AutoReason =
+  | 'keyword_same_box'
+  | 'keyword'
+  | 'strict_format'
+  | 'low_confidence'
+  | 'no_keyword'
+  | 'none'
+
 export interface ScanResponse {
   ok: boolean
   reason?: string
@@ -27,6 +36,13 @@ export interface ScanResponse {
   candidates: SerialCandidate[]
   rawTexts: string[]
   perf: OcrPerf
+  /** 실시간 모드에서 화면을 멈추고 확인을 받을지 */
+  autoCapture: boolean
+  autoReason: AutoReason
+  /** 자동 캡처 최소 신뢰도 (서버 설정, 기본 0.9) */
+  autoConfidence: number
+  /** 프레임에서 발견된 시리얼 표기 (S/N, 序列号 …) */
+  keywordHits: string[]
   /** 스캔 시점 프레임 (base64 JPEG, data: 접두사 없음) */
   frame?: string
 }
@@ -38,8 +54,18 @@ export interface ServerConfig {
 
 export const STREAM_URL = '/api/stream'
 
-export async function scan(signal?: AbortSignal): Promise<ScanResponse> {
-  const res = await fetch('/api/scan', { method: 'POST', signal })
+/**
+ * 한 프레임을 OCR 한다.
+ *
+ * 실시간 폴링에서는 includeFrame=false 로 호출한다. 매번 base64 JPEG(~80KB)를
+ * 받을 필요가 없기 때문이다. 서버는 자동 캡처가 걸린 경우에만 프레임을 붙여 준다.
+ */
+export async function scan(
+  opts: { signal?: AbortSignal; includeFrame?: boolean } = {},
+): Promise<ScanResponse> {
+  const { signal, includeFrame = true } = opts
+  const url = includeFrame ? '/api/scan' : '/api/scan?frame=0'
+  const res = await fetch(url, { method: 'POST', signal })
   const body = await res.json().catch(() => null)
 
   if (!res.ok) {
@@ -58,6 +84,22 @@ export async function fetchConfig(): Promise<ServerConfig> {
     throw new Error('서버 설정을 가져오지 못했습니다.')
   }
   return (await res.json()) as ServerConfig
+}
+
+/** 자동 캡처가 걸리지 않은 이유를 사람이 읽을 문장으로. */
+export function autoReasonToMessage(res: ScanResponse): string {
+  switch (res.autoReason) {
+    case 'low_confidence':
+      return `신뢰도 ${(res.confidence * 100).toFixed(0)}% — 임계값 ${(
+        res.autoConfidence * 100
+      ).toFixed(0)}% 미만입니다. 라벨을 더 가까이, 정면으로 비추세요.`
+    case 'no_keyword':
+      return '시리얼 형태는 찾았지만 S/N 같은 표기가 없어 확정하지 않았습니다.'
+    case 'none':
+      return '시리얼을 찾는 중…'
+    default:
+      return ''
+  }
 }
 
 export function reasonToMessage(reason: string | undefined): string {

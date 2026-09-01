@@ -173,6 +173,77 @@ std::string detectLanIPv4()
 }
 
 // ---------------------------------------------------------------------------
+// 시리얼 키워드 감지
+//
+// 실시간 자동 인식에서 "이건 진짜 시리얼 라벨이다" 를 판정하는 근거.
+// 라벨에 흔히 붙는 표기를 한/영/중/일로 훑는다.
+// 정규화된 문자열이 아니라 OCR 원문에서 찾는다. toUpperAlnum 이 "S/N" 을
+// "S-N" 으로 바꿔 버리기 때문이다.
+// ---------------------------------------------------------------------------
+
+// ASCII 만 대문자로 올린다. UTF-8 멀티바이트(한글/중국어)는 건드리지 않는다.
+std::string upperAscii(const std::string& in)
+{
+    std::string out = in;
+    for (char& c : out) {
+        const auto uc = static_cast<unsigned char>(c);
+        if (uc < 0x80) {
+            c = static_cast<char>(std::toupper(uc));
+        }
+    }
+    return out;
+}
+
+// 짧은 ASCII 키워드("SN")가 다른 단어에 묻힌 경우를 걸러낸다.
+bool standaloneAt(const std::string& hay, std::size_t pos, std::size_t len)
+{
+    const auto isWordChar = [](char c) {
+        return std::isalnum(static_cast<unsigned char>(c)) != 0;
+    };
+    if (pos > 0 && isWordChar(hay[pos - 1])) {
+        return false;
+    }
+    const std::size_t end = pos + len;
+    if (end < hay.size() && isWordChar(hay[end])) {
+        return false;
+    }
+    return true;
+}
+
+/// 시리얼 표기가 들어 있으면 true. matched 에 찾은 표기를 담는다.
+bool containsSerialKeyword(const std::string& rawText, std::string* matched)
+{
+    // 멀티바이트 키워드는 원문 그대로 부분 문자열 검색한다.
+    static const char* kUnicodeKeywords[] = {
+        "시리얼", "일련번호", "제품번호",
+        "序列号", "序列號", "序號", "編號",
+        "シリアル", "製造番号",
+    };
+    for (const char* kw : kUnicodeKeywords) {
+        if (rawText.find(kw) != std::string::npos) {
+            *matched = kw;
+            return true;
+        }
+    }
+
+    // ASCII 키워드는 대문자로 올린 뒤 단어 경계까지 확인한다.
+    static const char* kAsciiKeywords[] = {"SERIAL NO", "SERIAL", "S/N", "S.N", "SN"};
+    const std::string upper = upperAscii(rawText);
+    for (const char* kw : kAsciiKeywords) {
+        const std::size_t len = std::strlen(kw);
+        std::size_t pos = upper.find(kw);
+        while (pos != std::string::npos) {
+            if (standaloneAt(upper, pos, len)) {
+                *matched = kw;
+                return true;
+            }
+            pos = upper.find(kw, pos + 1);
+        }
+    }
+    return false;
+}
+
+// ---------------------------------------------------------------------------
 // 시리얼 추출
 // ---------------------------------------------------------------------------
 
@@ -391,9 +462,70 @@ std::vector<SerialCandidate> extractSerials(const std::vector<camocr::OcrText>& 
 
 // OCR 결과 + 시리얼 후보를 스캔 응답 JSON 으로 만든다.
 // HTTP 핸들러와 --test-image 경로가 같은 포맷을 쓰도록 한 곳에 모아 둔다.
-std::string buildScanJson(const camocr::OcrResult& result, const std::string& frameB64)
+// OCR 결과에서 시리얼 후보와 자동 캡처 판정을 뽑아낸다.
+struct ScanAnalysis {
+    std::vector<SerialCandidate> candidates;
+    std::vector<std::string> keywordHits;
+    bool autoCapture = false;
+    std::string autoReason = "none";
+    double autoConfidence = 0.90;
+};
+
+ScanAnalysis analyzeScan(const camocr::OcrResult& result, double autoConfidence)
 {
-    const std::vector<SerialCandidate> candidates = extractSerials(result.texts);
+    ScanAnalysis a;
+    a.autoConfidence = autoConfidence;
+    a.candidates = extractSerials(result.texts);
+
+    // --- 시리얼 키워드 (S/N, 시리얼, 序列号 …) ---------------------------
+    bool keywordSameBox = false;
+    for (const auto& t : result.texts) {
+        std::string matched;
+        if (!containsSerialKeyword(t.text, &matched)) {
+            continue;
+        }
+        if (std::find(a.keywordHits.begin(), a.keywordHits.end(), matched) == a.keywordHits.end()) {
+            a.keywordHits.push_back(matched);
+        }
+        // 시리얼과 같은 텍스트 박스에 있으면 가장 강한 근거다.
+        if (!a.candidates.empty() && t.text == a.candidates.front().rawText) {
+            keywordSameBox = true;
+        }
+    }
+
+    // --- 자동 캡처 판정 ---------------------------------------------------
+    // 실시간 모드에서 화면을 멈출지 결정한다.
+    //   조건 1) 신뢰도가 임계값(기본 90%) 이상
+    //   조건 2) 시리얼 키워드가 보이거나, 정식 포맷(DX-M1-XXXXXXXX)으로 읽혔을 것
+    if (a.candidates.empty()) {
+        return a;
+    }
+
+    const SerialCandidate& top = a.candidates.front();
+    if (top.score < autoConfidence) {
+        a.autoReason = "low_confidence";
+    } else if (keywordSameBox) {
+        a.autoCapture = true;
+        a.autoReason = "keyword_same_box";
+    } else if (!a.keywordHits.empty()) {
+        a.autoCapture = true;
+        a.autoReason = "keyword";
+    } else if (top.priority == 0) {
+        a.autoCapture = true;
+        a.autoReason = "strict_format";
+    } else {
+        a.autoReason = "no_keyword";
+    }
+    return a;
+}
+
+// 분석 결과를 스캔 응답 JSON 으로 만든다.
+// HTTP 핸들러와 --test-image 경로가 같은 포맷을 쓰도록 한 곳에 모아 둔다.
+std::string buildScanJson(const camocr::OcrResult& result,
+                          const ScanAnalysis& a,
+                          const std::string& frameB64)
+{
+    const auto& candidates = a.candidates;
 
     std::ostringstream oss;
     oss << "{";
@@ -435,6 +567,18 @@ std::string buildScanJson(const camocr::OcrResult& result, const std::string& fr
         << ",\"numCrops\":" << result.perf.numCrops
         << ",\"totalChars\":" << result.perf.totalChars
         << ",\"cps\":" << jsonNum(result.perf.cps) << "}";
+
+    oss << ",\"autoCapture\":" << (a.autoCapture ? "true" : "false");
+    oss << ",\"autoReason\":" << jsonStr(a.autoReason);
+    oss << ",\"autoConfidence\":" << jsonNum(a.autoConfidence, 2);
+    oss << ",\"keywordHits\":[";
+    for (std::size_t i = 0; i < a.keywordHits.size(); ++i) {
+        if (i > 0) {
+            oss << ",";
+        }
+        oss << jsonStr(a.keywordHits[i]);
+    }
+    oss << "]";
 
     oss << ",\"frame\":" << jsonStr(frameB64);
     oss << "}";
@@ -588,6 +732,8 @@ struct Args {
     fs::path testImage;
     fs::path registryPath;
     fs::path seedPath;
+    /** 실시간 모드에서 화면을 멈출 최소 신뢰도. */
+    double autoConfidence = 0.90;
 };
 
 fs::path defaultRoot()
@@ -619,6 +765,7 @@ void printUsage(const char* argv0)
         << "  --test-image <path>  카메라 대신 이미지 1장으로 OCR 을 돌리고 종료\n"
         << "  --registry <path>    기기 레지스트리 JSON (기본 <app>/data/registry.json)\n"
         << "  --seed <path>        레지스트리 최초 생성 시 쓸 시드 JSON\n"
+        << "  --auto-confidence <f> 실시간 자동 캡처 최소 신뢰도 0~1 (기본 0.90)\n"
         << "  -h, --help           도움말\n";
 }
 
@@ -674,6 +821,8 @@ bool parseArgs(int argc, char** argv, Args* args)
             args->registryPath = next("--registry");
         } else if (a == "--seed") {
             args->seedPath = next("--seed");
+        } else if (a == "--auto-confidence") {
+            args->autoConfidence = std::clamp(std::stod(next("--auto-confidence")), 0.0, 1.0);
         } else {
             std::cerr << "Unknown argument: " << a << "\n";
             printUsage(argv[0]);
@@ -740,7 +889,8 @@ int main(int argc, char** argv)
         }
         try {
             const camocr::OcrResult result = engine->run(image);
-            std::cout << buildScanJson(result, std::string()) << std::endl;
+            const ScanAnalysis analysis = analyzeScan(result, args.autoConfidence);
+            std::cout << buildScanJson(result, analysis, std::string()) << std::endl;
         } catch (const std::exception& e) {
             std::cerr << "[test] OCR 실패: " << e.what() << std::endl;
             return 1;
@@ -910,7 +1060,7 @@ int main(int argc, char** argv)
     });
 
     // --- /api/scan --------------------------------------------------------
-    auto handleScan = [&](const httplib::Request&, httplib::Response& res) {
+    auto handleScan = [&](const httplib::Request& req, httplib::Response& res) {
         if (!cameraOk) {
             res.status = 503;
             res.set_content("{\"ok\":false,\"reason\":\"camera_unavailable\"}", "application/json");
@@ -937,10 +1087,21 @@ int main(int argc, char** argv)
             return;
         }
 
-        std::vector<unsigned char> jpeg;
-        cv::imencode(".jpg", frame, jpeg, jpegParams);
+        const ScanAnalysis analysis = analyzeScan(result, args.autoConfidence);
 
-        res.set_content(buildScanJson(result, base64Encode(jpeg)), "application/json");
+        // 실시간 폴링에서는 매 프레임 base64 JPEG(~80KB)를 돌려줄 필요가 없다.
+        // 화면을 멈출 때(autoCapture)만 있으면 되므로, 클라이언트가 frame=0 을
+        // 보내면 자동 캡처가 걸린 경우에만 프레임을 붙인다.
+        const bool frameRequested = req.get_param_value("frame") != "0";
+
+        std::string frameB64;
+        if (frameRequested || analysis.autoCapture) {
+            std::vector<unsigned char> jpeg;
+            cv::imencode(".jpg", frame, jpeg, jpegParams);
+            frameB64 = base64Encode(jpeg);
+        }
+
+        res.set_content(buildScanJson(result, analysis, frameB64), "application/json");
     };
 
     server.Post("/api/scan", handleScan);

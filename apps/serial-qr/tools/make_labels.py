@@ -67,7 +67,7 @@ def draw_label(canvas: Image.Image, box: tuple[int, int, int, int], serial: str)
     w = x1 - x0
 
     f_brand = font(SANS_BOLD, 58)
-    f_serial = font(MONO_BOLD, 92)
+    f_serial = font(MONO_BOLD, 72)
     f_caption = font(SANS, 34)
 
     # 상단 브랜드 바
@@ -75,15 +75,19 @@ def draw_label(canvas: Image.Image, box: tuple[int, int, int, int], serial: str)
     d.text((x0 + 40, y0 + 20), "DEEPX", font=f_brand, fill=(0, 212, 224))
 
     # 시리얼 — OCR 이 읽어야 하는 본문. 여백을 넉넉히 두고 크게 그린다.
-    bbox = d.textbbox((0, 0), serial, font=f_serial)
+    #
+    # "S/N:" 접두사는 장식이 아니다. 실시간 자동 인식이 "이건 진짜 시리얼
+    # 라벨이다" 를 판정하는 키워드 근거이므로 같은 줄에 붙여 둔다.
+    line = f"S/N: {serial}"
+    bbox = d.textbbox((0, 0), line, font=f_serial)
     d.text(
         (x0 + (w - (bbox[2] - bbox[0])) / 2, y0 + 190),
-        serial,
+        line,
         font=f_serial,
         fill=(0, 0, 0),
     )
 
-    caption = "S/N  ·  DX-M1 NPU MODULE"
+    caption = "DX-M1 NPU MODULE"
     bbox = d.textbbox((0, 0), caption, font=f_caption)
     d.text(
         (x0 + (w - (bbox[2] - bbox[0])) / 2, y0 + 320),
