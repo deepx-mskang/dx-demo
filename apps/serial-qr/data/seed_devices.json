@@ -1,0 +1,138 @@
+[
+  {
+    "serial": "DX-M1-A7K3P9V2",
+    "model": "DEEPX M1 Module",
+    "npu": "DX-M1 (25 TOPS)",
+    "hwRevision": "Rev. C2",
+    "firmware": "DXRT 2.9.4",
+    "manufacturedAt": "2025-03-14",
+    "macAddress": "9C:4E:20:A7:73:12",
+    "warrantyUntil": "2028-03-13",
+    "qaStatus": "PASS",
+    "deployedSite": "수원 스마트팩토리 · 검사라인 #3",
+    "specs": {
+      "tops": 25,
+      "memoryGb": 4,
+      "powerW": 5
+    }
+  },
+  {
+    "serial": "DX-M1-C4M8T6HD",
+    "model": "DEEPX M1 Module",
+    "npu": "DX-M1 (25 TOPS)",
+    "hwRevision": "Rev. C2",
+    "firmware": "DXRT 2.9.4",
+    "manufacturedAt": "2025-04-02",
+    "macAddress": "9C:4E:20:C4:A8:37",
+    "warrantyUntil": "2028-04-01",
+    "qaStatus": "PASS",
+    "deployedSite": "판교 R&D 센터 · 벤치 #7",
+    "specs": {
+      "tops": 25,
+      "memoryGb": 4,
+      "powerW": 5
+    }
+  },
+  {
+    "serial": "DX-M1-E5N2R7FA",
+    "model": "DEEPX M1-Plus Module",
+    "npu": "DX-M1 (25 TOPS)",
+    "hwRevision": "Rev. D1",
+    "firmware": "DXRT 3.0.1",
+    "manufacturedAt": "2025-06-21",
+    "macAddress": "9C:4E:20:E5:F2:5B",
+    "warrantyUntil": "2028-06-20",
+    "qaStatus": "PASS",
+    "deployedSite": "평택 물류센터 · 분류기 A",
+    "specs": {
+      "tops": 25,
+      "memoryGb": 8,
+      "powerW": 6
+    }
+  },
+  {
+    "serial": "DX-M1-G3P6W9KC",
+    "model": "DEEPX M1-Plus Module",
+    "npu": "DX-M1 (25 TOPS)",
+    "hwRevision": "Rev. D1",
+    "firmware": "DXRT 3.0.1",
+    "manufacturedAt": "2025-07-08",
+    "macAddress": "9C:4E:20:63:C6:9A",
+    "warrantyUntil": "2028-07-07",
+    "qaStatus": "PENDING",
+    "deployedSite": "미배치 (창고 재고)",
+    "specs": {
+      "tops": 25,
+      "memoryGb": 8,
+      "powerW": 6
+    }
+  },
+  {
+    "serial": "DX-M1-H8T4Y2MD",
+    "model": "DEEPX M1 Module",
+    "npu": "DX-M1 (25 TOPS)",
+    "hwRevision": "Rev. C1",
+    "firmware": "DXRT 2.8.7",
+    "manufacturedAt": "2024-11-19",
+    "macAddress": "9C:4E:20:88:D4:2E",
+    "warrantyUntil": "2027-11-18",
+    "qaStatus": "FAIL",
+    "deployedSite": "반품 · RMA-2025-0412",
+    "specs": {
+      "tops": 25,
+      "memoryGb": 4,
+      "powerW": 5
+    }
+  },
+  {
+    "serial": "DX-M1-J6V3X7NE",
+    "model": "DEEPX M1 Dev Board",
+    "npu": "DX-M1 (25 TOPS)",
+    "hwRevision": "Rev. B4",
+    "firmware": "DXRT 2.9.4",
+    "manufacturedAt": "2025-01-30",
+    "macAddress": "9C:4E:20:16:E3:74",
+    "warrantyUntil": "2028-01-29",
+    "qaStatus": "PASS",
+    "deployedSite": "고객사 PoC · 대구 제조",
+    "specs": {
+      "tops": 25,
+      "memoryGb": 4,
+      "powerW": 7
+    }
+  },
+  {
+    "serial": "DX-M1-K9W5A4PT",
+    "model": "DEEPX M1-Plus Module",
+    "npu": "DX-M1 (25 TOPS)",
+    "hwRevision": "Rev. D1",
+    "firmware": "DXRT 3.0.1",
+    "manufacturedAt": "2025-08-12",
+    "macAddress": "9C:4E:20:79:E5:C1",
+    "warrantyUntil": "2028-08-11",
+    "qaStatus": "PASS",
+    "deployedSite": "인천 항만 · CCTV 게이트 #12",
+    "specs": {
+      "tops": 25,
+      "memoryGb": 8,
+      "powerW": 6
+    }
+  },
+  {
+    "serial": "DX-M1-16716Y",
+    "model": "DEEPX M1 Module",
+    "npu": "DX-M1 (25 TOPS)",
+    "hwRevision": "Rev. C2",
+    "firmware": "DXRT 2.9.4",
+    "manufacturedAt": "2025-05-27",
+    "macAddress": "9C:4E:20:A2:F8:66",
+    "warrantyUntil": "2028-05-26",
+    "qaStatus": "PASS",
+    "deployedSite": "산본 공장 · 외관검사 #1",
+    "specs": {
+      "tops": 25,
+      "memoryGb": 4,
+      "powerW": 5
+    }
+  }
+]

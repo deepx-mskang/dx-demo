@@ -1,0 +1,45 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    @apply bg-dx-bg text-dx-text antialiased;
+    font-family: 'Pretendard', 'Noto Sans KR', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  }
+}
+
+@layer components {
+  .dx-card {
+    @apply rounded-2xl border border-dx-border bg-dx-card;
+  }
+
+  .dx-label {
+    @apply text-xs font-medium uppercase tracking-wider text-dx-muted;
+  }
+
+  .dx-btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl px-6 py-3 text-base
+           font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-40;
+  }
+
+  .dx-btn-primary {
+    @apply dx-btn bg-dx-cyan text-dx-bg hover:bg-dx-cyanDim hover:text-dx-text;
+  }
+
+  .dx-input {
+    @apply w-full rounded-xl border border-dx-border bg-dx-surface px-3 py-2.5 text-sm
+           text-dx-text outline-none transition-colors
+           focus:border-dx-cyan placeholder:text-dx-muted/50;
+  }
+
+  .dx-btn-ghost {
+    @apply dx-btn border border-dx-border bg-transparent text-dx-text hover:bg-dx-surface;
+  }
+}
