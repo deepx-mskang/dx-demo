@@ -43,16 +43,79 @@ def notify_launcher_ready() -> None:
 # OCR result structure constants
 CONFIDENCE_THRESHOLD = 0.2  # Minimum confidence score to display
 
+# Camera and crop geometry.
+# Capture at 1080p: MJPG runs 1920x1080 at the same measured ~15 fps as 720p, and
+# the extra sensor resolution puts ~1.5x more pixels on the text inside the crop,
+# which measurably improves recognition on small print like business cards.
+# OCR_CROP_SIZE must stay under the det_router 800 px threshold so detection uses
+# det_v6_m_640.dxnn; the 960 model is roughly 2.2x slower per frame. Cropping at
+# native scale (no downscale) keeps the text as sharp as the sensor delivers.
+CAMERA_WIDTH = 1280
+CAMERA_HEIGHT = 720
+CAMERA_FPS = 15.0
+OCR_CROP_SIZE = 640
+# --high-accuracy, same as the C++ flag: 1080p capture, 960 crop, det_v6_m_960.
+HIGH_ACCURACY_WIDTH = 1920
+HIGH_ACCURACY_HEIGHT = 1080
+HIGH_ACCURACY_CROP_SIZE = 960
+
+
+# Unsharp mask presets, same as the C++ demo's SharpnessMode (main.cpp:91-133).
+# (src_weight, blur_weight, sigma)
+SHARPNESS_PRESETS = {
+    "off": None,
+    "soft": (1.25, -0.25, 0.8),
+    "medium": (1.5, -0.5, 1.0),
+    "strong": (1.8, -0.8, 1.2),
+}
+
+
+def apply_ocr_sharpness(frame, mode):
+    """Unsharp mask on the L channel only, mirroring the C++ demo.
+
+    A plain 3x3 high-boost kernel over all three BGR channels sharpens ~16x
+    harder than this and lifts chroma noise by half again, which is what made
+    the preview look far worse than the C++ one. Working in Lab and touching
+    only L keeps colour untouched.
+    """
+    params = SHARPNESS_PRESETS.get(mode)
+    if params is None or frame is None or frame.size == 0:
+        return frame
+    src_weight, blur_weight, sigma = params
+    lab = cv2.cvtColor(frame, cv2.COLOR_BGR2Lab)
+    l, a, b = cv2.split(lab)
+    blurred = cv2.GaussianBlur(l, (0, 0), sigma)
+    l = cv2.addWeighted(l, src_weight, blurred, blur_weight, 0.0)
+    return cv2.cvtColor(cv2.merge([l, a, b]), cv2.COLOR_Lab2BGR)
+
+
+def center_crop_to_size(frame, crop_size):
+    """Centre square crop at native resolution, downscaling only if the frame is smaller."""
+    h, w = frame.shape[:2]
+    if w >= crop_size and h >= crop_size:
+        x = (w - crop_size) // 2
+        y = (h - crop_size) // 2
+        return frame[y:y + crop_size, x:x + crop_size]
+    side = min(w, h)
+    x = (w - side) // 2
+    y = (h - side) // 2
+    return cv2.resize(frame[y:y + side, x:x + side], (crop_size, crop_size), interpolation=cv2.INTER_LINEAR)
+
 # Theme index: 0=Trendy, 1=Midnight Blue, 2=Carbon, 3=Dracula, 4=Nord, 5=Gruvbox, 6=One Dark
 THEME_INDEX = 2
 
-# Language-specific font paths (relative to script dir) for Inference Result Text and overlay
+# Assets live in the shared workspace tree, not next to this script. Anchor on
+# __file__ so the demo works from any working directory.
 _SCRIPT_DIR = Path(__file__).resolve().parent
+V6_ASSETS_DIR = (_SCRIPT_DIR / ".." / ".." / ".." / "workspace" / "models" / "ocr" / "v6").resolve()
+_FONT_DIR = V6_ASSETS_DIR / "fonts"
+
+# Language-specific fonts for Inference Result Text and overlay
 LANGUAGE_FONT_PATHS = {
-    "ch": _SCRIPT_DIR / "engine" / "fonts" / "simfang.ttf",
-    "japan": _SCRIPT_DIR / "engine" / "fonts" / "NotoSansJP-VariableFont_wght.ttf",
-    "korean": _SCRIPT_DIR / "engine" / "fonts" / "korean_font.ttf",
-    "german": _SCRIPT_DIR / "engine" / "fonts" / "Roboto-Regular.ttf",
+    "ch": _FONT_DIR / "simfang.ttf",
+    "japan": _FONT_DIR / "NotoSansJP-VariableFont_wght.ttf",
+    "korean": _FONT_DIR / "korean_font.ttf",
+    "german": _FONT_DIR / "Roboto-Regular.ttf",
 }
 
 
@@ -204,9 +267,15 @@ class CameraThread(QThread):
     # Webcam focus_absolute: UI 0–100 (CAP_PROP_FOCUS / V4L2)
     camera_focus_state = Signal(int, bool)  # focus_ui, focus_ok
 
-    def __init__(self, camera_id=0, ocr_worker=None, video_path=None):
+    def __init__(self, camera_id=0, ocr_worker=None, video_path=None, sharpness_mode="off",
+                 width=CAMERA_WIDTH, height=CAMERA_HEIGHT, fps=CAMERA_FPS, crop_size=OCR_CROP_SIZE):
         super().__init__()
         self.camera_id = camera_id
+        self.sharpness_mode = sharpness_mode
+        self.width = width
+        self.height = height
+        self.fps = fps
+        self.crop_size = crop_size
         self.video_path = video_path  # str or None; if set, use file instead of camera
         self.running = False
         self.cap = None
@@ -252,6 +321,12 @@ class CameraThread(QThread):
                 self.cap.set(cv2.CAP_PROP_FOCUS, self._ui_to_cap_focus(cmd[1]) * 10)
                 print(f"set focus to {cmd[1]}")
 
+    def _set_autofocus(self, enabled: bool):
+        """Match the C++ demo, which pins focus while the demo runs (main.cpp:806)."""
+        ok = self.cap.set(cv2.CAP_PROP_AUTOFOCUS, 1.0 if enabled else 0.0)
+        state = 'enable' if enabled else 'disable'
+        print(f"Camera autofocus {state} {'requested' if ok else 'request failed'}")
+
     def enqueue_focus_ui(self, ui: int):
         self.focus_cmd_queue.put(("focus", ui))
 
@@ -271,12 +346,15 @@ class CameraThread(QThread):
                 return
             # 카메라 최적화 설정
             self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # 버퍼 크기 최소화
-            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)
-            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)
-            self.cap.set(cv2.CAP_PROP_FPS, 5)
+            # MJPG first: at YUYV 1920x1080 the sensor only delivers 5 fps, which
+            # caps the whole pipeline. MJPG 1280x720 runs at 30 fps. Same settings
+            # as the C++ demo (main.cpp:744).
+            self.cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('M', 'J', 'P', 'G'))
+            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
+            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
+            self.cap.set(cv2.CAP_PROP_FPS, self.fps)
+            self._set_autofocus(False)
 
-        #crop_width = 460
-        crop_width = 512
         print(f"w: {self.cap.get(cv2.CAP_PROP_FRAME_WIDTH)}, h:{self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT)}, FPS: {self.cap.get(cv2.CAP_PROP_FPS)}, CC: {self.cap.get(cv2.CAP_PROP_FOURCC)}")
 
         if not self.video_path:
@@ -295,11 +373,13 @@ class CameraThread(QThread):
                 if self.video_path:
                     self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
                 continue
-            # Side crop is for the fixed wide camera pipeline only; keep full frame for video files.
-            if not self.video_path and crop_width > 0:
-                frame = frame[:, crop_width:frame.shape[1] - crop_width]
-            kernel = np.array([[-1, -1, -1], [-1, 9, -1], [-1, -1, -1]])
-            frame = cv2.filter2D(frame, -1, kernel)
+            # Square centre crop, so det_router picks the 640 model. The old side
+            # crop left a 896x1080 frame, which routed to det_v6_m_960 - that model
+            # costs 304 ms/frame against 137 ms for the 640 one. Keep full frame for
+            # video files. Mirrors centerCropToSize() in the C++ demo (main.cpp:135).
+            if not self.video_path:
+                frame = center_crop_to_size(frame, self.crop_size)
+            frame = apply_ocr_sharpness(frame, self.sharpness_mode)
             # Video: avoid sync doc preprocess here — it shares IE with the async OCR thread and can stall
             # the capture loop after the first frame. Doc stages run inside process_batch for video.
             if not self.video_path:
@@ -312,6 +392,8 @@ class CameraThread(QThread):
     def stop(self):
         self.running = False
         if self.cap:
+            if not self.video_path:
+                self._set_autofocus(True)
             self.cap.release()
         self.wait()
 
@@ -654,9 +736,11 @@ class PerformanceInfoWidget(QWidget):
         ]
         
         if has_detected_text:
+            # PP-OCRv6 runs detection and recognition only, so there is no
+            # classification latency to turn into an FPS figure.
             cls_row = [
                 QTableWidgetItem("CLS"),
-                QTableWidgetItem(f"{1000/(cls_npu + 1e-10):.2f}")
+                QTableWidgetItem(f"{1000/cls_npu:.2f}" if cls_npu > 0 else "not used (v6)")
             ]
             rec_row = [
                 QTableWidgetItem("REC"),
@@ -916,11 +1000,19 @@ class AccuracyInfoWidget(QWidget):
 
 
 class ImageViewerApp(QWidget):
-    def __init__(self, ocr_workers=None, app_version=None, hide_preview=False, language="korean", video_path=None):
+    def __init__(self, ocr_workers=None, app_version=None, hide_preview=False, language="korean", video_path=None, camera_id=0, sharpness_mode="off",
+                 cam_width=CAMERA_WIDTH, cam_height=CAMERA_HEIGHT, cam_fps=CAMERA_FPS,
+                 crop_size=OCR_CROP_SIZE):
         super().__init__()
         self.setWindowTitle(f"DEEPX OCR Demo — {app_version}")
         self.language = language
         self.video_path = video_path
+        self.camera_id = camera_id
+        self.sharpness_mode = sharpness_mode
+        self.cam_width = cam_width
+        self.cam_height = cam_height
+        self.cam_fps = cam_fps
+        self.crop_size = crop_size
         
         # Set window to full screen size
         screen_size = QApplication.primaryScreen().geometry()
@@ -1284,7 +1376,7 @@ class ImageViewerApp(QWidget):
         if self.camera_active:
             return
         #camera_id = self.camera_selector.currentIndex()
-        camera_id = 0  # default camera
+        camera_id = self.camera_id
         worker = self.get_next_worker()
         
         if worker is None:
@@ -1292,7 +1384,10 @@ class ImageViewerApp(QWidget):
             return
         
         # Start camera / video thread
-        self.camera_thread = CameraThread(camera_id, worker, video_path=self.video_path)
+        self.camera_thread = CameraThread(camera_id, worker, video_path=self.video_path,
+                                          sharpness_mode=self.sharpness_mode,
+                                          width=self.cam_width, height=self.cam_height,
+                                          fps=self.cam_fps, crop_size=self.crop_size)
         self.camera_thread.frame_ready.connect(self.on_camera_frame_display)  # For real-time display
         self.camera_thread.ocr_frame_ready.connect(self.on_camera_frame_ocr)  # For OCR processing
         self.camera_thread.camera_focus_state.connect(self._on_camera_focus_state)
@@ -1540,6 +1635,18 @@ if __name__ == "__main__":
                         help='Use video file as input instead of camera (~ and env vars in path are expanded)')
     parser.add_argument('--language', default='ch', choices=['ch', 'korean', 'german'],
                         help='Recognition language: ch, korean, or german (dict, rec model suffix, and font)')
+    parser.add_argument('--camera', dest='camera', type=int, default=0, metavar='N',
+                        help='camera index to open, e.g. 0 for /dev/video0 (default: 0)')
+    # Same input knobs as the C++ demo, so both backends can be launched identically.
+    parser.add_argument('--width', type=int, default=CAMERA_WIDTH, help=f'capture width (default: {CAMERA_WIDTH})')
+    parser.add_argument('--height', type=int, default=CAMERA_HEIGHT, help=f'capture height (default: {CAMERA_HEIGHT})')
+    parser.add_argument('--fps', type=float, default=CAMERA_FPS, help=f'capture fps (default: {CAMERA_FPS})')
+    parser.add_argument('--sharpness', default=None, choices=list(SHARPNESS_PRESETS),
+                        help='unsharp-mask strength on camera frames (default: off, as in the C++ demo)')
+    parser.add_argument('--enable-sharpness', dest='enable_sharpness', action='store_true', default=False,
+                        help='turn on sharpening using the default medium mode')
+    parser.add_argument('--high-accuracy', dest='high_accuracy', action='store_true', default=False,
+                        help='1920x1080 capture, 960 centre crop, det_v6_m_960 (slower, more detail)')
     parser.add_argument('--hide-preview', dest='hide_preview', action='store_true', default=False)
     parser.add_argument('--enable-uvdoc', dest='disable_uvdoc', action='store_false', default=True)
     
@@ -1550,20 +1657,39 @@ if __name__ == "__main__":
         video_path = os.path.expanduser(os.path.expandvars(args.video))
         if not os.path.isfile(video_path):
             parser.error(f"video file not found: {video_path}")
- 
+
+    # Resolve the input geometry the same way the C++ demo does.
+    cam_width, cam_height = args.width, args.height
+    crop_size = OCR_CROP_SIZE
+    if args.high_accuracy:
+        cam_width, cam_height = HIGH_ACCURACY_WIDTH, HIGH_ACCURACY_HEIGHT
+        crop_size = HIGH_ACCURACY_CROP_SIZE
+
+    # --sharpness sets the mode and implies enabling it; --enable-sharpness alone
+    # means medium; otherwise off. Same precedence as parseArgs() in main.cpp.
+    if args.sharpness is not None:
+        sharpness_mode = args.sharpness
+    elif args.enable_sharpness:
+        sharpness_mode = "medium"
+    else:
+        sharpness_mode = "off"
+
     print("PP-OCRv6 selected. Detection and recognition only.")
-    print("v6 detection model: det_v6_m_640.dxnn")
-    base_model_dirname = "../../workspace/models/ocr/v6"
+    det_model_note = "det_v6_m_960.dxnn" if crop_size >= 800 else "det_v6_m_640.dxnn"
+    print(f"Detection model: {det_model_note}")
+    print(f"Camera input: /dev/video{args.camera}, {cam_width}x{cam_height} @ {args.fps} fps, format MJPG")
+    print(f"Input crop size: {crop_size}x{crop_size}")
+    print(f"OCR sharpness: {sharpness_mode}")
+    base_model_dirname = str(V6_ASSETS_DIR)
+    if not V6_ASSETS_DIR.is_dir():
+        parser.error(
+            f"PP-OCRv6 assets not found at {V6_ASSETS_DIR}. Run ./setup_assets.sh from the repository root."
+        )
     det_model_dirname = base_model_dirname
     rec_model_dirname = base_model_dirname
 
-    # Dict path by language
-    if args.language == "korean":
-        rec_dict_dir = f"{base_model_dirname}/ppocrv6_dict.txt" # Korean not explicitly split in v6 cpp assets yet
-    elif args.language == "german":
-        rec_dict_dir = f"{base_model_dirname}/ppocrv6_dict.txt"
-    else:
-        rec_dict_dir = f"{base_model_dirname}/ppocrv6_dict.txt"
+    # v6 ships a single dictionary covering every supported language.
+    rec_dict_dir = str(V6_ASSETS_DIR / "ppocrv6_dict.txt")
 
     # Optional: set default font for draw_utils (overlay text) if available
     try:
@@ -1574,12 +1700,8 @@ if __name__ == "__main__":
     except Exception:
         pass
 
-    cls_model_path = f"{base_model_dirname}/textline_ori.dxnn"
-    uvdoc_model_path = f"{base_model_dirname}/UVDoc_pruned_p3.dxnn"
-    doc_ori_model_path = f"{base_model_dirname}/doc_ori_fixed.dxnn"
-    
     def make_rec_engines(model_dirname, language):
-        """Build rec engines; use language-specific model name if file exists (e.g. rec_v5_korean_ratio_3.dxnn)."""
+        """Build rec engines; use the language-specific model when that file exists."""
         io = IO().set_use_ort(True)
         rec_model_map = {}
         # Suffix for recognition model filename: "" (ch), "_korean", "_latin" (german)
@@ -1621,8 +1743,9 @@ if __name__ == "__main__":
     app = QApplication(sys.argv)
     app.setStyleSheet(DEEPX_APP_STYLESHEET)
     viewer = ImageViewerApp(
-        ocr_workers=ocr_workers, app_version="v5", hide_preview=args.hide_preview, language=args.language,
-        video_path=video_path,
+        ocr_workers=ocr_workers, app_version="v6", hide_preview=args.hide_preview, language=args.language,
+        video_path=video_path, camera_id=args.camera, sharpness_mode=sharpness_mode,
+        cam_width=cam_width, cam_height=cam_height, cam_fps=args.fps, crop_size=crop_size,
     )
     notify_launcher_ready()
     viewer.showFullScreen()

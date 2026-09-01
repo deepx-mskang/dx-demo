@@ -19,6 +19,7 @@ endif()
 set(OD_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../object_detection/yolo26s")
 set(SEG_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../instance_segmentation/yolo26s_seg")
 set(POSE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../pose_estimation/yolo26s_pose")
+set(DEPTH_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../depth_estimation/yolo26_depth_s")
 
 if(NOT DEFINED PROJECT_ROOT_OVERRIDE)
     get_filename_component(PROJECT_ROOT_OVERRIDE "${CMAKE_CURRENT_SOURCE_DIR}/../.." ABSOLUTE)
@@ -38,6 +39,10 @@ target_include_directories(yolo26s_3 PRIVATE
     "${OD_ROOT}/extern"
     "${SEG_ROOT}"
     "${POSE_ROOT}"
+    # Listed last on purpose: every root carries a byte-identical common/ tree, so
+    # `#include "common/..."` must keep resolving through OD_ROOT. Each extra root
+    # contributes only its uniquely-named factory/*.hpp.
+    "${DEPTH_ROOT}"
 )
 
 target_compile_options(yolo26s_3 PRIVATE -Wall -Wextra -O3)

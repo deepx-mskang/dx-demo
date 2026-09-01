@@ -118,8 +118,9 @@ void ObjectDetection::threadFunc(int period)
     char caption[100] = {0,};
     float fps = 0.f; double infCount = 0.0;
 #endif
-    _profiler.Add(cap);
-    _profiler.Add(proc);
+    // DX-RT dropped Profiler::Add/Erase/Get. Start/End still feed the profiler
+    // report; the elapsed time we need per frame is measured locally.
+    std::chrono::time_point<std::chrono::high_resolution_clock> capStart, procStart;
     cv::Mat member_temp;
 
     struct CameraUiCache {
@@ -172,7 +173,22 @@ void ObjectDetection::threadFunc(int period)
         if(stop) break;
         _profiler.Start(proc);
         _profiler.Start(cap);
+        capStart = procStart = std::chrono::high_resolution_clock::now();
         auto input = _vStream.GetInputStream();
+        if(input == nullptr)
+        {
+            // A dead source (unplugged camera, end of stream) yields no frame.
+            // RunAsync would throw on a null input and abort every channel, so
+            // idle this one instead and retry on the next period.
+            _profiler.End(cap);
+            _profiler.End(proc);
+#ifdef __linux__
+            usleep(period*1000);
+#elif _WIN32
+            Sleep(period);
+#endif
+            continue;
+        }
         _fps_time_s = std::chrono::high_resolution_clock::now();
         std::ignore = _ie->RunAsync(input, (void*)this, (void*)outputMemory);
         std::vector<BoundingBox> bboxes;
@@ -220,7 +236,9 @@ void ObjectDetection::threadFunc(int period)
         _latencyTime = _ie->GetLatency();
         
         _profiler.End(cap);
-        int64_t t = (period*1000 - _profiler.Get(cap))/1000;
+        int64_t capTime = std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::high_resolution_clock::now() - capStart).count();
+        int64_t t = (period*1000 - capTime)/1000;
         if(t<0 || t>period) t = 0;
         
         if(_processed_count > 0)
@@ -233,15 +251,14 @@ void ObjectDetection::threadFunc(int period)
         }
 
         _profiler.End(proc);
-        _processTime = _profiler.Get(proc);
+        _processTime = std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::high_resolution_clock::now() - procStart).count();
 #ifdef __linux__
         usleep(t*1000);
 #elif _WIN32
         Sleep(t);
 #endif
     }
-    _profiler.Erase(cap);
-    _profiler.Erase(proc);
     std::cout << _channel << " ended." << std::endl;
 }
 void ObjectDetection::threadFillBlank(int period)

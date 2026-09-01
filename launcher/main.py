@@ -11,6 +11,7 @@ from collections.abc import Callable
 import subprocess
 import sys
 import uuid
+import webbrowser
 from pathlib import Path
 
 from PyQt5.QtCore import QFileSystemWatcher, Qt, QTimer
@@ -47,10 +48,10 @@ MAIN_TITLE_I18N = {
 }
 
 # How many launcher cards to show (first N entries of LAUNCHER_ITEMS).
-NUM_ITEMS = 9
+NUM_ITEMS = 12
 
 # Grid columns; rows are computed as ceil(NUM_ITEMS / GRID_COLUMNS).
-GRID_COLUMNS = 3
+GRID_COLUMNS = 4
 
 # Launcher root (directory containing this file); assets and ready state live here.
 _ROOT = Path(__file__).resolve().parent
@@ -72,14 +73,20 @@ _ready_finishers: dict[str, Callable[[], None]] = {}
 # loading_sec (optional, seconds): card-wide default for all buttons on this item.
 # video_loading_sec / camera_loading_sec (optional): override per primary/secondary button.
 # Early end of Wait: touch or write $DX_LAUNCHER_READY_FILE (under READY_STATUS_DIR per click).
+# A script value starting with http:// or https:// is opened in the default web browser
+# instead of being run as a shell script (e.g. the DEEPX AI Chatbot Agent card).
 DEFAULT_BUTTON_LOADING_SEC = 1.0
+
+# Web demo opened directly in the default browser (no shell script involved).
+CHATBOT_URL = "https://zh.deepx.rapidflare.ai/"
+
 LAUNCHER_ITEMS = [
     {
-        "title": "YOLO26-S (OD / POSE / SEG)",
+        "title": "YOLO26-S (OD / POSE / SEG / DEPTH)",
         "title_i18n": {
-            "zh": "YOLO26-S (目标检测 / 姿态 / 分割)",
-            "ja": "YOLO26-S (物体検出 / ポーズ / 分割)",
-            "ko": "YOLO26-S (객체 탐지 / 자세 / 분할)",
+            "zh": "YOLO26-S (目标检测 / 姿态 / 分割 / 深度)",
+            "ja": "YOLO26-S (物体検出 / ポーズ / 分割 / 深度)",
+            "ko": "YOLO26-S (객체 탐지 / 자세 / 분할 / 깊이)",
         },
         "image": "assets/demo-yolo26.png",
         "video_script": "../scripts/run_yolo26_3_video.sh",
@@ -111,6 +118,21 @@ LAUNCHER_ITEMS = [
         "video_script": "../scripts/run_ocr.sh",
         "loading_sec": 30,
         "video_label": "PaddleOCR v6",
+    },
+    {
+        "title": "Optical Character Recognition (Web)",
+        "title_i18n": {
+            "zh": "光学字符识别 (网页版)",
+            "ja": "光学文字認識 (Web版)",
+            "ko": "광학 문자 인식 (웹)",
+        },
+        "image": "assets/demo-ocr-web.png",
+        "video_label": "PP-OCRv5 Web",
+        "camera_label": "Stop",
+        "video_script": "../scripts/run_ocr_web.sh",
+        "camera_script": "../scripts/kill_ocr_web.sh",
+        "video_loading_sec": 90,
+        "camera_loading_sec": 0,
     },
     {
         "title": "YOLOv5S Multi-channel (36)",
@@ -174,6 +196,33 @@ LAUNCHER_ITEMS = [
         "video_script": "../scripts/run_clip_single_video.sh",
         "camera_script": "../scripts/run_clip_single.sh",
         "loading_sec": 15,
+    },
+    {
+        "title": "Model Zoo",
+        "title_i18n": {
+            "zh": "模型库",
+            "ja": "モデルズー",
+            "ko": "모델 주",
+        },
+        "image": "assets/demo-modelzoo.png",
+        "video_label": "Start",
+        "camera_label": "Stop",
+        "video_script": "../scripts/run_modelzoo.sh",
+        "camera_script": "../scripts/kill_modelzoo.sh",
+        "video_loading_sec": 10,
+        "camera_loading_sec": 0,
+    },
+    {
+        "title": "DEEPX AI Chatbot Agent",
+        "title_i18n": {
+            "zh": "DEEPX AI 聊天机器人助手",
+            "ja": "DEEPX AI チャットボットエージェント",
+            "ko": "DEEPX AI 챗봇 에이전트",
+        },
+        "image": "assets/demo-chatbot.png",
+        "video_label": "Open Chatbot",
+        "video_script": CHATBOT_URL,
+        "video_loading_sec": 3,
     },
     {
         "title": "Performance Monitoring (CPU / NPU)",
@@ -265,6 +314,30 @@ def _ensure_ready_status_dir() -> Path:
     return READY_STATUS_DIR
 
 
+def _is_url(target: str) -> bool:
+    return target.startswith(("http://", "https://"))
+
+
+def _open_url(url: str) -> bool:
+    """Open url in the default browser; falls back to xdg-open."""
+    try:
+        if webbrowser.open(url, new=2):
+            return True
+    except Exception as e:  # webbrowser can raise on headless/misconfigured hosts
+        print(f"[launcher] webbrowser failed for {url}: {e}", file=sys.stderr)
+    try:
+        subprocess.Popen(
+            ["xdg-open", url],
+            start_new_session=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        return True
+    except OSError as e:
+        print(f"[launcher] failed to open {url}: {e}", file=sys.stderr)
+        return False
+
+
 def _resolve_shell_script(script_path: str) -> Path | None:
     expanded = Path(os.path.expanduser(script_path))
     if not str(expanded):
@@ -298,6 +371,17 @@ def _run_shell_script(
         print(f"[launcher] failed to run {p}: {e}", file=sys.stderr)
         return False
     return True
+
+
+def _launch_target(
+    target: str,
+    language_code: str,
+    extra_env: dict[str, str] | None = None,
+) -> bool:
+    """Run target as a shell script, or open it in a browser when it is a URL."""
+    if _is_url(target):
+        return _open_url(target)
+    return _run_shell_script(target, language_code, extra_env)
 
 
 def _on_ready_file_changed(path: str) -> None:
@@ -446,7 +530,7 @@ class LauncherItem(QWidget):
                 delay_ms: int,
             ):
                 def _on_click(_checked: bool = False) -> None:
-                    if _resolve_shell_script(scr) is None:
+                    if not _is_url(scr) and _resolve_shell_script(scr) is None:
                         return
 
                     for other_btn in action_buttons:
@@ -493,7 +577,7 @@ class LauncherItem(QWidget):
 
                     language_code = self._language_getter()
                     backend_code = self._backend_getter()
-                    if not _run_shell_script(
+                    if not _launch_target(
                         scr,
                         language_code,
                         {READY_FILE_ENV: key, "DX_BACKEND": backend_code},

@@ -73,11 +73,13 @@ class DetectionNode(Node):
             res_det_preprocess[0]['resize']['size'] = [res, res]
             self.det_preprocess_map[res] = PreProcessingCompose(res_det_preprocess)
 
+        # Tuned for the v6 DB head; values mirror the C++ reference constants in
+        # apps/paddle-ocr/cpp/ocr_engine.cpp:22-53.
         self.det_postprocess = DetPostProcess(
-            thresh=0.3,
+            thresh=0.7,
             box_thresh=0.6,
-            max_candidates=1500,
-            unclip_ratio=1.5,
+            max_candidates=50,
+            unclip_ratio=1.4,
             use_dilation=False,
             score_mode="fast",
             box_type="quad",
@@ -206,9 +208,10 @@ class ClassificationNode(Node):
 
 class RecognitionNode(Node):
     """
-    Text Recognition Node (PP-OCRv5 Recognition)
+    Text Recognition Node (PP-OCRv6 Recognition)
     - Multi-model support for various aspect ratios of text images
-    - Automatic model selection by ratio: ratio_3, ratio_5, ratio_10, ratio_15, ratio_25, ratio_35
+    - The ratio buckets come from whichever models were handed in, and each
+      model's input size is read back from the model itself
     - CRNN-based text recognition
     """
     def __init__(self, models:dict, dict_dir:str):
@@ -218,22 +221,51 @@ class RecognitionNode(Node):
         """
         super().__init__()
         self.rec_model_map: dict = models
-        
-        self.rec_preprocess_map = {}
 
-        ratio_rec_preprocess = rec_preprocess.copy()
-        ratio_rec_preprocess[0]['resize']['size'] = [48, 120]
-        self.rec_preprocess_map[3] = PreProcessingCompose(ratio_rec_preprocess)
-        for i in [5, 10, 15, 25, 35]:
-            ratio_rec_preprocess[0]['resize']['size'] = [48, 48 * i]
-            self.rec_preprocess_map[i] = PreProcessingCompose(ratio_rec_preprocess)
+        # Build one preprocessing chain per model, sized from the model's own
+        # input tensor. Hardcoding the sizes drifts out of sync with the .dxnn
+        # set (v6 ratio 3 is 48x120, not 48x144), so ask the engine instead.
+        # Mirrors the C++ reference, apps/paddle-ocr/cpp/ocr_engine.cpp:279-284.
+        # Callers also register 'ratio_<n>' string aliases pointing at the same
+        # engines, so key off the numeric buckets only.
+        self.rec_preprocess_map = {}
+        self.rec_capacity_map = {}
+        numeric_models = {r: m for r, m in models.items() if isinstance(r, int)}
+        for ratio, model in sorted(numeric_models.items()):
+            height, width = self._model_input_hw(model, ratio)
+            ratio_rec_preprocess = rec_preprocess.copy()
+            ratio_rec_preprocess[0]['resize']['size'] = [height, width]
+            self.rec_preprocess_map[ratio] = PreProcessingCompose(ratio_rec_preprocess)
+            self.rec_capacity_map[ratio] = width / height
+        self._sorted_ratios = sorted(self.rec_preprocess_map)
+
         character_dict_path = dict_dir
-        
+
         self.rec_postprocess = RecLabelDecode(character_dict_path=character_dict_path, use_space_char=True)
-        self.router = rec_router
+        self.router = self.route_ratio
         self.overlap_ratio = 0.1
-        self.drop = 0.3
+        self.drop = 0.5
         self.debug_counter = 0
+
+    @staticmethod
+    def _model_input_hw(model, ratio):
+        """Read [H, W] from the model's input tensor, falling back to 48 x 48*ratio."""
+        try:
+            shape = model.get_input_tensors_info()[0]['shape']
+            if len(shape) == 4:
+                # NHWC for the v6 models; NCHW keeps H/W in the last two axes.
+                return (shape[1], shape[2]) if shape[3] == 3 else (shape[2], shape[3])
+        except Exception as exc:
+            print(f"[REC] could not read input shape for ratio {ratio} ({exc}); assuming 48x{48 * ratio}")
+        return 48, 48 * ratio
+
+    def route_ratio(self, width, height):
+        """Pick the smallest loaded model whose width/height capacity fits this crop."""
+        ratio = width / height if height > 0 else float('inf')
+        for candidate in self._sorted_ratios:
+            if ratio <= self.rec_capacity_map[candidate]:
+                return candidate
+        return self._sorted_ratios[-1]
 
     def split_bbox_for_recognition(self, bbox, rec_image_shape, overlap_ratio=0.1):
         return split_bbox_for_recognition(bbox, rec_image_shape, overlap_ratio)

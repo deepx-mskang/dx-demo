@@ -1,5 +1,6 @@
 #pragma once
 #include <string.h>
+#include <stdlib.h>
 #include <vector>
 #include <opencv2/opencv.hpp>
 #include <common/objects.hpp>
@@ -18,6 +19,18 @@ typedef enum{
     PRELOAD = 0,
     RUNTIME,
 }SrcMode;
+
+// gstreamer-vaapi's decoders produce buffers OpenCV's appsink reads as blank or
+// scrambled on this platform, and decodebin ranks them above the software ones.
+// Demoting them makes decodebin pick a decoder whose output OpenCV can map.
+// Must run before the first cv::VideoCapture open, which is what initialises
+// GStreamer and reads this variable. Existing settings win.
+inline void disableGstVaapiDecoders(void)
+{
+#ifdef __linux__
+    setenv("GST_PLUGIN_FEATURE_RANK", "vaapidecodebin:NONE,vaapih264dec:NONE,vaapipostproc:NONE", 0);
+#endif
+}
 
 class VideoStream
 {
@@ -117,14 +130,23 @@ public:
 
 #ifdef USE_VAAPI
                 // _gstVideoPipeline = "filesrc location=" + _srcPath + " ! decodebin ! queue ! videoconvert ! appsink";
+                // Decode in software: gstreamer-vaapi hands appsink VA surfaces
+                // that OpenCV cannot map, so frames arrive at the right size but
+                // blank or scrambled. disableGstVaapiDecoders() keeps decodebin
+                // from auto-plugging the VA-API decoder here.
                 _gstVideoPipeline = "filesrc location=" + _srcPath + " ! \
                                     queue leaky=no max-size-buffers=30 max-size-bytes=0 max-size-time=0 ! \
-                                    qtdemux ! vaapidecodebin !  \
+                                    qtdemux ! decodebin ! \
                                     queue leaky=no max-size-buffers=5 max-size-bytes=0 max-size-time=0 ! \
                                     videoconvert qos=false ! videoscale method=0 add-borders=false qos=false ! \
                                     video/x-raw,width=" + std::to_string(640) + ",height=" + std::to_string(360) + ",pixel-aspect-ratio=1/1 ! \
                                     queue leaky=no max-size-buffers=30 max-size-bytes=0 max-size-time=0 ! \
-                                    appsink";
+                                    appsink sync=false";
+                // sync=false: appsink defaults to honouring the stream's
+                // timestamps, so preloading N frames took N/fps seconds of wall
+                // clock per channel -- 3.4s each, ~2min for 36 channels. These
+                // frames are decoded up front and replayed from memory, so
+                // there is nothing to synchronise against here.
 
                 _video.open(_gstVideoPipeline, cv::CAP_GSTREAMER);
                 printf("=========================== \n");
@@ -151,22 +173,15 @@ public:
                 {
 #ifdef __linux__
 #ifdef USE_VAAPI
-                    // _gstVideoPipeline = "filesrc location=" + _srcPath + " ! decodebin ! queue ! videoconvert ! appsink";
-                    _gstVideoPipeline = "filesrc location=" + _srcPath + " ! \
-                                        queue leaky=no max-size-buffers=30 max-size-bytes=0 max-size-time=0 ! \
-                                        qtdemux ! vaapidecodebin !  \
-                                        queue leaky=no max-size-buffers=5 max-size-bytes=0 max-size-time=0 ! \
-                                        videoconvert qos=false ! videoscale method=0 add-borders=false qos=false ! \
-                                        video/x-raw,width=" + std::to_string(640) + ",height=" + std::to_string(360) + ",pixel-aspect-ratio=1/1 ! \
-                                        queue leaky=no max-size-buffers=30 max-size-bytes=0 max-size-time=0 ! \
-                                        appsink";
-
-                    _video.open(_gstVideoPipeline, cv::CAP_GSTREAMER);
+                    // A camera is a V4L2 device, not a container file: filesrc/qtdemux
+                    // cannot open /dev/videoN, so capture it with v4l2src.
+                    _gstCameraPipeline = "v4l2src device=" + _srcPath + " ! videoconvert ! appsink";
                     printf("=========================== \n");
-                    std::cout << "video gstVidePipeline: " << _gstVideoPipeline << std::endl;
+                    std::cout << "camera gstCameraPipeline: " << _gstCameraPipeline << std::endl;
                     printf("=========================== \n");
+                    _video.open(_gstCameraPipeline, cv::CAP_GSTREAMER);
 #else
-                    _video.open(_srcPath);
+                    _video.open(_srcPath, cv::CAP_V4L2);
 #endif
 #elif _WIN32
                     std::cout << "Error: could not open " << _srcPath << ", open 0 camera instead " << _srcPath << std::endl;
@@ -177,7 +192,7 @@ public:
                 {
 #ifdef __linux__
 #ifdef USE_VAAPI
-                    _gstCameraPipeline = "v4l2src device=/dev/video0 ! videoconvert ! appsink";
+                    _gstCameraPipeline = "v4l2src device=/dev/video" + _srcPath + " ! videoconvert ! appsink";
                     printf("=========================== \n");
                     std::cout << "camera gstCameraPipeline: " << _gstCameraPipeline << std::endl;
                     printf("=========================== \n");

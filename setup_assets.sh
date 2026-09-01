@@ -49,6 +49,13 @@ else
 fi
 
 echo "Extracting assets to workspace/ ..."
-tar -xzf "$TAR_FILE" -C "$WORKSPACE_DIR"
+# The archive is packed with a top-level workspace/ directory. Strip it so the
+# contents land in workspace/ instead of workspace/workspace/.
+TOP_LEVEL_DIRS=$(tar -tzf "$TAR_FILE" | awk -F/ '{print $1}' | sort -u)
+if [ "$TOP_LEVEL_DIRS" = "workspace" ]; then
+    tar -xzf "$TAR_FILE" -C "$WORKSPACE_DIR" --strip-components=1
+else
+    tar -xzf "$TAR_FILE" -C "$WORKSPACE_DIR"
+fi
 
 echo "Done! Assets are ready in $WORKSPACE_DIR"

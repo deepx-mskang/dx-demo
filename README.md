@@ -4,25 +4,40 @@ DEEPX NPU 런타임(DXRT)을 활용한 데모 모음입니다. 객체 검출, �
 
 **지원 환경:** Ubuntu 20.04 / 22.04 / 24.04 / debian 12 / debian 13 (x86_64, aarch64)
 
+> **⚠️ 디스플레이 해상도:** 데모 화면은 **1920 × 1080** 고정 캔버스 기준으로 그려집니다. 데모 실행 전 모니터 해상도를 1920×1080 으로 설정하세요. 다른 해상도(예: 2560×1440)에서는 풀스크린 레이아웃이 어긋나거나 화면 일부가 잘려 보일 수 있습니다.
+>
+> ```bash
+> xrandr                                     # 출력 이름과 지원 해상도 확인
+> xrandr --output HDMI-2 --mode 1920x1080    # 출력 이름은 위에서 확인한 값으로
+> ```
+
 ---
 
 ## Repository 구조
 
-| 폴더 | 설명 |
+데모는 모두 `apps/` 아래에 있고, 저장소 루트에는 공용 스크립트와 설정이 있습니다.
+
+| 경로 | 설명 |
 |------|------|
-| `automotive/` | 자율주행 관련 데모 (PIDNet, SFA3D, YOLOPv2) |
-| `clip-single/` | CLIP 카메라-텍스트 매칭 (C++/Qt5) |
-| `depth/` | Depth Anything v2 비동기 데모 |
-| `drone/` | 드론 관련 데모 |
-| `hand-landmark/` | 손 검출 Qt5 데모 |
+| `build.sh` | 최상위 빌드 스크립트 (Python 환경 + OCR Web 환경 + 모든 C++ 데모) |
+| `setup_env.sh` | 공용 Python 가상환경 `.venv` 생성, `requirements.txt` 및 `dx_engine` 설치 |
+| `setup_assets.sh` | `.dxnn` 모델·테스트 비디오 다운로드 (`workspace/` 생성) |
+| `clean_all.sh` | C++ 빌드 산출물 정리 (`build/`, `bin/`, `cmake-build-*`) |
+| `config.sh` | 카메라·브라우저 등 데모 공통 설정 |
 | `launcher/` | PyQt5 기반 통합 런처 |
-| `paddle-ocr/` | PaddleOCR 카메라 데모 |
-| `yolo26/` | YOLO26 분류·검출·세그멘테이션·포즈 추정 |
-| `yolo-multi/` | 멀티 채널 YOLO 객체 검출 |
-| `model-zoo/` | DEEPX Model Zoo HTML 문서 |
-| `perf-monitor/` | 성능 모니터링 Python 스크립트 |
-| `scripts/` | 런처 및 데모 실행 스크립트 |
+| `scripts/` | 런처 및 데모 실행·종료 스크립트 |
 | `workspace/` | 데모 모델·비디오 (`setup_assets.sh`로 생성, git 미포함) |
+| `apps/automotive/` | 자율주행 관련 데모 (PIDNet, SFA3D, YOLOPv2) |
+| `apps/clip-single/` | CLIP 카메라-텍스트 매칭 (C++/Qt5) |
+| `apps/depth/` | Depth Anything v2 비동기 데모 |
+| `apps/drone/` | 드론 관련 데모 |
+| `apps/hand-landmark/` | 손 검출 Qt5 데모 |
+| `apps/paddle-ocr/` | PaddleOCR 카메라 데모 |
+| `apps/paddle-ocr-web/` | PP-OCRv5 Web 문서 OCR 데모 (Gradio + FastAPI, 최상위 `build.sh` 가 환경 구성) |
+| `apps/yolo26/` | YOLO26 분류·검출·세그멘테이션·포즈·뎁스 추정 |
+| `apps/yolo-multi/` | 멀티 채널 YOLO 객체 검출 |
+| `apps/model-zoo/` | DEEPX Model Zoo HTML 문서 |
+| `apps/perf-monitor/` | CPU / NPU 성능 모니터 (PyQt5 오버레이) |
 
 각 C++ 데모 폴더에는 `CMakeLists.txt`와 `build.sh`가 있습니다. `CMakeLists.txt`가 있는 디렉터리에서 바로 빌드할 수 있습니다.
 
@@ -132,6 +147,24 @@ workspace/
 
 ---
 
+## Model Zoo 업데이트
+
+`apps/model-zoo/` 데모는 미리 받아 둔 정적 HTML 페이지를 브라우저로 엽니다. 최신 페이지로 갱신하려면 DEEPX 사내망에서 아래를 실행하세요. 별도 인증 토큰은 필요하지 않습니다.
+
+```bash
+./apps/model-zoo/update_modelzoo.sh
+```
+
+`apps/model-zoo/DX_ModelZoo_<YYYYMMDD>.html` 로 저장하고 `DX_ModelZoo_latest.html` 심볼릭 링크를 새 파일로 바꿉니다. 런처의 **Model Zoo → Start** 는 이 링크를 엽니다. 다운로드가 실패하면 기존 HTML 과 링크를 그대로 유지합니다.
+
+| 환경 변수 | 설명 |
+|-----------|------|
+| `DX_MODELZOO_URL` | publish 엔드포인트 변경 (기본: `https://modelzoo-publish-api.devops.dpx.ai/publish/html`) |
+
+`wget` 이 필요합니다 (`sudo apt install -y wget`). 엔드포인트는 사내 CA(`devops.dpx.ai`) 인증서를 쓰기 때문에 `--no-check-certificate` 로 받습니다.
+
+---
+
 ## Camera Configuration (카메라 설정)
 
 All camera-based demos (Python, C++, and JSON-configured apps) are centralized through the `config.sh` file located at the root of the repository.
@@ -153,10 +186,38 @@ By changing this one file, all launcher scripts and demos will automatically use
 
 ## 빌드
 
+### 최상위 빌드 (권장)
+
+저장소 루트의 `build.sh` 하나로 Python 환경과 모든 C++ 데모를 한 번에 준비합니다.
+
+```bash
+./build.sh
+```
+
+수행 순서:
+
+1. **Python 환경** — `setup_env.sh` 로 공용 `.venv` 를 만들고 `requirements.txt` 와 `dx_engine` 휠을 설치합니다.
+2. **OCR Web 환경** — `apps/paddle-ocr-web/build.sh` 로 Gradio UI·FastAPI OCR 서버 저장소를 clone 하고 전용 venv 를 구성합니다.
+3. **C++ 데모** — `apps/**/cpp/**/build.sh` 를 모두 찾아 순서대로 빌드하고, 마지막에 성공/실패 요약을 출력합니다.
+
+| 옵션 | 설명 |
+|------|------|
+| `--clean` | 각 C++ 데모를 클린 빌드하고 OCR Web venv 도 새로 만듭니다 |
+| `--lang cpp` | C++ 데모만 빌드 (Python·OCR Web 환경 구성 생략) |
+| `--lang python` | Python·OCR Web 환경만 구성 (C++ 빌드 생략) |
+| `--lang all` | 기본값. 둘 다 수행 |
+| `--no-ocr-web` | OCR Web 환경 구성만 건너뜁니다 |
+
+> **OCR Web 환경 구성은 오래 걸립니다.** 저장소 2개 clone + venv 2개 + `paddlepaddle` 설치라 네트워크 상태를 탑니다. 이미 구성돼 있으면 각 단계를 건너뛰므로 재실행은 빠릅니다. 실패하더라도 C++ 빌드는 계속 진행되고 마지막에 실패로 보고되며, `apps/paddle-ocr-web/python/build.sh` 로 따로 재시도할 수 있습니다. 이 데모가 필요 없다면 `--no-ocr-web` 을 쓰세요.
+
+빌드 산출물을 지우려면 `./clean_all.sh` 를 실행합니다. `workspace/`, 에셋, Python 가상환경은 남깁니다.
+
+### 개별 데모 빌드
+
 각 C++ 데모 디렉터리에서 `build.sh`를 실행합니다.
 
 ```bash
-cd depth          # 예시: depth 데모
+cd apps/depth/cpp          # 예시: depth 데모
 ./build.sh
 ```
 
@@ -166,7 +227,7 @@ cd depth          # 예시: depth 데모
 ./build.sh --clean
 ```
 
-`build.sh` 동작:
+각 데모 `build.sh` 동작:
 
 1. `build/` 디렉터리 생성
 2. `build/` 안에서 `cmake .. -DCMAKE_BUILD_TYPE=Release` 실행
@@ -178,16 +239,19 @@ cd depth          # 예시: depth 데모
 
 | 경로 | 데모 |
 |------|------|
-| `automotive/pidnet/` | PIDNet 세그멘테이션 |
-| `automotive/sfa3d/` | SFA3D 3D 검출 |
-| `automotive/yolopv2/` | YOLOPv2 |
-| `clip-single/` | CLIP 카메라-텍스트 매칭 |
-| `depth/` | Depth Anything v2 |
-| `drone/` | 드론 데모 |
-| `hand-landmark/` | 손 검출 |
-| `paddle-ocr/cam-ppocr-v6/` | PP-OCR v6 |
-| `yolo-multi/` | 멀티 채널 YOLO |
-| `yolo26/yolo26s_3/` | YOLO26 3모델 |
+| `apps/automotive/cpp/pidnet/` | PIDNet 세그멘테이션 |
+| `apps/automotive/cpp/sfa3d/` | SFA3D 3D 검출 |
+| `apps/automotive/cpp/yolopv2/` | YOLOPv2 |
+| `apps/clip-single/cpp/` | CLIP 카메라-텍스트 매칭 |
+| `apps/depth/cpp/` | Depth Anything v2 |
+| `apps/drone/cpp/` | 드론 데모 |
+| `apps/hand-landmark/cpp/` | 손 검출 |
+| `apps/paddle-ocr/cpp/` | PaddleOCR 카메라 데모 |
+| `apps/yolo-multi/cpp/` | 멀티 채널 YOLO |
+| `apps/yolo26/cpp/yolo26s_3/` | YOLO26 4모델 (검출/포즈/세그멘테이션/깊이) |
+| `apps/yolo26/cpp/yolo26s_all/` | YOLO26 전체 모델 |
+
+`apps/paddle-ocr-web/` 는 Python 전용이라 C++ 빌드 대상이 아닙니다 (최상위 `build.sh` 의 Python 단계에서 구성).
 
 
 ---
@@ -197,9 +261,13 @@ cd depth          # 예시: depth 데모
 저장소에 포함된 PyQt5 런처로 여러 데모를 GUI에서 실행할 수 있습니다.
 
 ```bash
-sudo apt install -y python3-pyqt5
-python3 launcher/main.py
+./scripts/run_launcher.sh
 ```
+
+`config.sh` 의 카메라 설정을 읽고, 실행 중인 데모를 모두 정리한 뒤 `.venv` 로 런처를 띄웁니다.
+`.venv` 없이 직접 띄우려면 `sudo apt install -y python3-pyqt5` 후 `python3 launcher/main.py` 도 됩니다.
+
+각 카드의 버튼은 상단 **Backend** 콤보에서 고른 백엔드(C++ / Python, 기본값 C++)로 실행됩니다.
 
 자세한 설정은 [`launcher/README.md`](launcher/README.md)를 참고하세요.
 
@@ -226,12 +294,32 @@ sudo apt install -y v4l-utils
 v4l2-ctl --list-devices    # 장치 확인
 ```
 
-**`automotive/sfa3d` 빌드 실패**
+**`apps/automotive/cpp/sfa3d` 빌드 실패**
 
 SFA3D는 `DXRT_ROOT` CMake 변수로 DXRT 경로를 지정해야 할 수 있습니다.
 
 ```bash
 cmake .. -DCMAKE_BUILD_TYPE=Release -DDXRT_ROOT=/path/to/dx_rt
+```
+
+**성능 모니터링 데모에서 NPU 값이 `—` 로만 보이는 경우**
+
+NPU 사용률·온도는 `dxtop` 과 같은 소스를 `dx_engine` 파이썬 바인딩으로 읽습니다. 바인딩이 없거나 DXRT 데몬이 응답하지 않으면 값이 비어 보입니다.
+
+```bash
+dxrt-cli -s                                        # 장치·펌웨어 응답 확인
+./setup_env.sh                                     # .venv 에 dx_engine·psutil 설치
+.venv/bin/python -c "import dx_engine, psutil"     # 임포트 확인
+```
+
+이 데모는 C++ 구현이 없어 런처의 **Backend 콤보 설정과 무관하게** 항상 Python GUI 모니터로 실행됩니다.
+
+**OCR Web 데모가 시작되지 않는 경우**
+
+환경 구성이 끝나지 않았을 수 있습니다. 아래로 다시 구성하세요 (이미 된 단계는 건너뜁니다).
+
+```bash
+./apps/paddle-ocr-web/python/build.sh
 ```
 
 **데모 에셋이 없는 경우**
