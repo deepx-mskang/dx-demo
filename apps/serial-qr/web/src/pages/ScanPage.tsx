@@ -10,6 +10,9 @@ import { useDevice, useDevices } from '../hooks/useDevice'
 /** 실시간 스캔 간격. OCR 자체가 ~200ms 라 사실상 연속으로 돈다. */
 const POLL_INTERVAL_MS = 150
 
+/** 실측 FPS 를 평균낼 창 크기. 짧으면 숫자가 튀고 길면 반응이 둔하다. */
+const FPS_WINDOW_MS = 2000
+
 export default function ScanPage() {
   const navigate = useNavigate()
 
@@ -20,6 +23,7 @@ export default function ScanPage() {
   const [selected, setSelected] = useState<string | null>(null)
   const [live, setLive] = useState<ScanResponse | null>(null)
   const [scanCount, setScanCount] = useState(0)
+  const [fps, setFps] = useState(0)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
@@ -31,6 +35,10 @@ export default function ScanPage() {
   // 같은 번호를 즉시 다시 잡아 확인 화면이 무한히 반복되기 때문에 건너뛴다.
   const rejectedRef = useRef<Set<string>>(new Set())
   const [rejectedSerial, setRejectedSerial] = useState<string | null>(null)
+
+  // 스캔이 끝난 시각들. 누적 평균이 아니라 최근 창으로 FPS 를 내야
+  // 라벨이나 조명이 바뀌어 OCR 부하가 달라지는 게 숫자에 바로 보인다.
+  const fpsSamplesRef = useRef<number[]>([])
 
   const capture = useCallback((res: ScanResponse) => {
     setResult(res)
@@ -47,6 +55,10 @@ export default function ScanPage() {
     let cancelled = false
     const controller = new AbortController()
 
+    // 확인 화면에서 돌아왔을 때 멈춰 있던 동안의 표본이 섞이지 않게 비운다.
+    fpsSamplesRef.current = []
+    setFps(0)
+
     const loop = async () => {
       while (!cancelled && modeRef.current === 'live') {
         try {
@@ -56,6 +68,13 @@ export default function ScanPage() {
           setLive(res)
           setScanCount((n) => n + 1)
           setError(null)
+
+          const now = performance.now()
+          const samples = fpsSamplesRef.current
+          samples.push(now)
+          // 창을 벗어난 표본은 버리되, 간격 하나는 남겨 둔다.
+          while (samples.length > 2 && now - samples[0] > FPS_WINDOW_MS) samples.shift()
+          setFps(samples.length >= 2 ? ((samples.length - 1) * 1000) / (now - samples[0]) : 0)
 
           if (res.autoCapture && res.serial) {
             if (rejectedRef.current.has(res.serial)) {
@@ -165,7 +184,10 @@ export default function ScanPage() {
                     <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-dx-cyan opacity-60" />
                     <span className="relative inline-flex h-3 w-3 rounded-full bg-dx-cyan" />
                   </span>
-                  <span className="font-semibold">실시간 인식 중</span>
+                  <span className="font-mono text-lg font-semibold leading-none tabular-nums">
+                    {fps > 0 ? fps.toFixed(1) : '--'}
+                  </span>
+                  <span className="dx-label">FPS</span>
                   <span className="ml-auto font-mono text-xs text-dx-muted">
                     {scanCount}회 스캔
                   </span>
