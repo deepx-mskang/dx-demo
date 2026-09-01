@@ -1,10 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
 import QRCode from 'qrcode'
 
-export default function QrCard({ url }: { url: string }) {
+const escapeHtml = (s: string) =>
+  s.replace(/[&<>"']/g, (c) =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] ?? c,
+  )
+
+export default function QrCard({ url, serial }: { url: string; serial?: string }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const [error, setError] = useState<string | null>(null)
-  const [copied, setCopied] = useState(false)
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -18,14 +22,51 @@ export default function QrCard({ url }: { url: string }) {
     }).catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
   }, [url])
 
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(url)
-      setCopied(true)
-      window.setTimeout(() => setCopied(false), 1500)
-    } catch {
-      setError('클립보드에 복사하지 못했습니다.')
+  // 라벨 프린터로 바로 뽑을 수 있도록 숨은 iframe 에 인쇄용 문서를 만들어 출력한다.
+  // (window.open 은 팝업 차단에 걸리므로 iframe 을 쓴다)
+  const print = () => {
+    const canvas = canvasRef.current
+    if (!canvas) return
+
+    const frame = document.createElement('iframe')
+    frame.setAttribute('aria-hidden', 'true')
+    frame.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0'
+    document.body.appendChild(frame)
+
+    const doc = frame.contentDocument
+    const win = frame.contentWindow
+    if (!doc || !win) {
+      frame.remove()
+      setError('프린트 창을 열지 못했습니다.')
+      return
     }
+
+    doc.open()
+    doc.write(`<!doctype html><html lang="ko"><head><meta charset="utf-8">
+<title>${escapeHtml(serial || 'QR')}</title>
+<style>
+  @page { margin: 10mm; }
+  body { margin:0; display:flex; flex-direction:column; align-items:center; gap:4mm;
+         font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color:#000; }
+  img { width:55mm; height:55mm; image-rendering:pixelated; }
+  .serial { font-size:16pt; font-weight:700; letter-spacing:0.04em; }
+  .url { font-size:7pt; max-width:70mm; text-align:center; word-break:break-all; color:#333; }
+</style></head><body>
+<img src="${canvas.toDataURL('image/png')}" alt="QR">
+${serial ? `<div class="serial">${escapeHtml(serial)}</div>` : ''}
+<div class="url">${escapeHtml(url)}</div>
+</body></html>`)
+    doc.close()
+
+    const run = () => {
+      win.focus()
+      win.print()
+      window.setTimeout(() => frame.remove(), 1000)
+    }
+
+    const img = doc.querySelector('img')
+    if (img && !img.complete) img.addEventListener('load', run, { once: true })
+    else run()
   }
 
   return (
@@ -40,8 +81,8 @@ export default function QrCard({ url }: { url: string }) {
         <p className="break-all font-mono text-sm text-dx-text">{url}</p>
       </div>
 
-      <button type="button" onClick={copy} className="dx-btn-ghost w-full py-2 text-sm">
-        {copied ? '복사됨 ✓' : 'URL 복사'}
+      <button type="button" onClick={print} className="dx-btn-ghost w-full py-2 text-sm">
+        QR 프린트
       </button>
 
       <p className="text-center text-xs text-dx-muted">

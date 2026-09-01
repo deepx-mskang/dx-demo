@@ -29,7 +29,7 @@ export default function ResultPage() {
     >
       <div className="grid gap-6 lg:grid-cols-[380px_minmax(0,1fr)]">
         <div className="space-y-4">
-          <QrCard url={url} />
+          <QrCard url={url} serial={serial} />
 
           {configError && (
             <p className="rounded-xl border border-dx-amber/40 bg-dx-amber/10 p-3 text-xs text-dx-amber">
