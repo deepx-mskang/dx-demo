@@ -37,6 +37,6 @@ if [ "$DX_BACKEND" == "python" ]; then
 else
     echo "Running C++ backend..."
     cd cpp/pidnet
-    ./build/pidnet_s_cityscapes_async -m "${WORKSPACE}/models/automotive/pidnet_s_cityscapes_val_fixed.dxnn" -v "${WORKSPACE}/videos/common/pidnet-input-video.mp4" --config config.json --seg-palette pastel --exit-btn
+    ./build/pidnet_s_cityscapes_async -m "${WORKSPACE}/models/automotive/pidnet_s_cityscapes_val_fixed.dxnn" -v "${WORKSPACE}/videos/common/pidnet-input-video.mp4" --config config.json --seg-palette pastel --exit-btn --loop
 
 fi
